@@ -30,15 +30,11 @@ cd PHX
 
 Install Node.js Dependencies:
 ```bash
-cd central-bank-console
-npm install
-cd ../client-wallet
 npm install
 ```
 
 Install Python Dependencies:
 ```bash
-cd trading-terminal
 pip install matplotlib pandas numpy scipy
 ```
 
@@ -50,7 +46,7 @@ Using Ganache GUI:
 2. Launch Ganache GUI
 3. Create a new workspace or quickstart
 4. Configure the workspace:
-   - Port Number: 8545
+   - Port Number: 7545
    - Network ID: 1337
    - Gas Limit: 10000000
 5. Save and start the workspace
@@ -59,7 +55,7 @@ The default accounts will be automatically created with test ETH.
 
 ### 4. Smart Contract Deployment
 ```bash
-cd smart-contracts
+
 
 # Compile contracts
 npx hardhat compile
@@ -101,7 +97,7 @@ const CONFIG = {
 
 ### 1. Start Central Bank Console
 ```bash
-cd central-bank-console
+
 node phx-central-bank-enhanced.js
 ```
 
@@ -115,7 +111,7 @@ Features:
 
 ### 2. Start Client Wallet
 ```bash
-cd client-wallet
+
 node phxClientWallet.ui.js
 ```
 
@@ -129,7 +125,7 @@ Features:
 
 ### 3. Start Trading Terminal
 ```bash
-cd trading-terminal
+
 python phx_price_terminal.py
 ```
 
@@ -156,7 +152,7 @@ For Ganache GUI:
 1. Open MetaMask
 2. Add Custom Network:
    - Network Name: PHX Local
-   - RPC URL: http://127.0.0.1:8545
+   - RPC URL: http://127.0.0.1:7545
    - Chain ID: 1337
    - Currency: ETH
 3. Import Accounts:
@@ -207,29 +203,6 @@ All applications share data through:
 - Blockchain: Immutable transaction records
 - Local storage: User preferences and session data
 
-## Development
-
-### Smart Contract Development
-```bash
-cd smart-contracts
-
-# Run tests
-npx hardhat test
-
-# Deploy to testnet
-npx hardhat run scripts/deploy.js --network goerli
-```
-
-### Frontend Development
-```bash
-# Central Bank Console development
-cd central-bank-console
-node phx-central-bank-enhanced.js
-
-# Client Wallet development
-cd client-wallet
-node phxClientWallet.ui.js
-```
 
 ## Troubleshooting
 
@@ -237,10 +210,10 @@ node phxClientWallet.ui.js
 
 **Connection Refused**
 ```
-Error: cannot connect to http://127.0.0.1:8545
+Error: cannot connect to http://127.0.0.1:7545
 ```
 
-Solution: Ensure Ganache GUI is running and the workspace is started on port 8545
+Solution: Ensure Ganache GUI is running and the workspace is started on port 7545
 
 **Insufficient Funds**
 ```
@@ -270,13 +243,5 @@ Enable verbose logging:
 DEBUG=phx* node phx-central-bank-enhanced.js
 ```
 
-## Project Structure
-```
-PHX/
-├── smart-contracts/       # Solidity smart contracts
-├── central-bank-console/  # Central bank interface
-├── client-wallet/         # User wallet application
-├── trading-terminal/      # Price analysis terminal
-└── scripts/              # Deployment and utility scripts
-```
+
 
