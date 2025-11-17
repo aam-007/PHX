@@ -1,0 +1,536 @@
+{
+  "priceHistory": [
+    {
+      "price": 106.64,
+      "timestamp": "11/17/2025, 12:52:58 PM",
+      "volume24h": 1030033,
+      "totalTransactions": 21,
+      "marketConditions": {
+        "concentrationRisk": "91.3",
+        "velocityRisk": "1.0",
+        "largeTransferRisk": "4.0"
+      }
+    },
+    {
+      "price": 106.59,
+      "timestamp": "11/17/2025, 12:52:58 PM",
+      "volume24h": 1030033,
+      "totalTransactions": 21,
+      "marketConditions": {
+        "concentrationRisk": "91.3",
+        "velocityRisk": "1.0",
+        "largeTransferRisk": "4.0"
+      }
+    },
+    {
+      "price": 107.27,
+      "timestamp": "11/17/2025, 12:52:58 PM",
+      "volume24h": 1030033,
+      "totalTransactions": 21,
+      "marketConditions": {
+        "concentrationRisk": "91.3",
+        "velocityRisk": "1.0",
+        "largeTransferRisk": "4.0"
+      }
+    },
+    {
+      "price": 101.22,
+      "timestamp": "11/17/2025, 12:52:59 PM",
+      "volume24h": 1030033,
+      "totalTransactions": 21,
+      "marketConditions": {
+        "concentrationRisk": "91.3",
+        "velocityRisk": "1.0",
+        "largeTransferRisk": "4.0"
+      }
+    },
+    {
+      "price": 107.95,
+      "timestamp": "11/17/2025, 12:52:59 PM",
+      "volume24h": 1030033,
+      "totalTransactions": 21,
+      "marketConditions": {
+        "concentrationRisk": "91.3",
+        "velocityRisk": "1.0",
+        "largeTransferRisk": "4.0"
+      }
+    },
+    {
+      "price": 105.24,
+      "timestamp": "11/17/2025, 12:52:59 PM",
+      "volume24h": 1030033,
+      "totalTransactions": 21,
+      "marketConditions": {
+        "concentrationRisk": "91.3",
+        "velocityRisk": "1.0",
+        "largeTransferRisk": "4.0"
+      }
+    },
+    {
+      "price": 104.4,
+      "timestamp": "11/17/2025, 12:52:59 PM",
+      "volume24h": 1030033,
+      "totalTransactions": 21,
+      "marketConditions": {
+        "concentrationRisk": "91.3",
+        "velocityRisk": "1.0",
+        "largeTransferRisk": "4.0"
+      }
+    },
+    {
+      "price": 95.78,
+      "timestamp": "11/17/2025, 12:52:59 PM",
+      "volume24h": 1030033,
+      "totalTransactions": 21,
+      "marketConditions": {
+        "concentrationRisk": "91.3",
+        "velocityRisk": "1.0",
+        "largeTransferRisk": "4.0"
+      }
+    },
+    {
+      "price": 90.91,
+      "timestamp": "11/17/2025, 12:53:00 PM",
+      "volume24h": 1030033,
+      "totalTransactions": 21,
+      "marketConditions": {
+        "concentrationRisk": "91.3",
+        "velocityRisk": "1.0",
+        "largeTransferRisk": "4.0"
+      }
+    },
+    {
+      "price": 91.17,
+      "timestamp": "11/17/2025, 12:53:00 PM",
+      "volume24h": 1030033,
+      "totalTransactions": 21,
+      "marketConditions": {
+        "concentrationRisk": "91.3",
+        "velocityRisk": "1.0",
+        "largeTransferRisk": "4.0"
+      }
+    },
+    {
+      "price": 90.1,
+      "timestamp": "11/17/2025, 12:53:00 PM",
+      "volume24h": 1030033,
+      "totalTransactions": 21,
+      "marketConditions": {
+        "concentrationRisk": "91.3",
+        "velocityRisk": "1.0",
+        "largeTransferRisk": "4.0"
+      }
+    },
+    {
+      "price": 93.61,
+      "timestamp": "11/17/2025, 12:53:00 PM",
+      "volume24h": 1030033,
+      "totalTransactions": 21,
+      "marketConditions": {
+        "concentrationRisk": "91.3",
+        "velocityRisk": "1.0",
+        "largeTransferRisk": "4.0"
+      }
+    },
+    {
+      "price": 104.22,
+      "timestamp": "11/17/2025, 12:53:00 PM",
+      "volume24h": 1030033,
+      "totalTransactions": 21,
+      "marketConditions": {
+        "concentrationRisk": "91.3",
+        "velocityRisk": "1.0",
+        "largeTransferRisk": "4.0"
+      }
+    },
+    {
+      "price": 101.65,
+      "timestamp": "11/17/2025, 12:53:01 PM",
+      "volume24h": 1030033,
+      "totalTransactions": 21,
+      "marketConditions": {
+        "concentrationRisk": "91.3",
+        "velocityRisk": "1.0",
+        "largeTransferRisk": "4.0"
+      }
+    },
+    {
+      "price": 101.12,
+      "timestamp": "11/17/2025, 12:53:01 PM",
+      "volume24h": 1030033,
+      "totalTransactions": 21,
+      "marketConditions": {
+        "concentrationRisk": "91.3",
+        "velocityRisk": "1.0",
+        "largeTransferRisk": "4.0"
+      }
+    },
+    {
+      "price": 105.09,
+      "timestamp": "11/17/2025, 12:53:01 PM",
+      "volume24h": 1030033,
+      "totalTransactions": 21,
+      "marketConditions": {
+        "concentrationRisk": "91.3",
+        "velocityRisk": "1.0",
+        "largeTransferRisk": "4.0"
+      }
+    },
+    {
+      "price": 104.11,
+      "timestamp": "11/17/2025, 12:53:01 PM",
+      "volume24h": 1030033,
+      "totalTransactions": 21,
+      "marketConditions": {
+        "concentrationRisk": "91.3",
+        "velocityRisk": "1.0",
+        "largeTransferRisk": "4.0"
+      }
+    },
+    {
+      "price": 95.92,
+      "timestamp": "11/17/2025, 12:53:01 PM",
+      "volume24h": 1030033,
+      "totalTransactions": 21,
+      "marketConditions": {
+        "concentrationRisk": "91.3",
+        "velocityRisk": "1.0",
+        "largeTransferRisk": "4.0"
+      }
+    },
+    {
+      "price": 94.08,
+      "timestamp": "11/17/2025, 12:53:02 PM",
+      "volume24h": 1030033,
+      "totalTransactions": 21,
+      "marketConditions": {
+        "concentrationRisk": "91.3",
+        "velocityRisk": "1.0",
+        "largeTransferRisk": "4.0"
+      }
+    },
+    {
+      "price": 92.32,
+      "timestamp": "11/17/2025, 12:53:02 PM",
+      "volume24h": 1030033,
+      "totalTransactions": 21,
+      "marketConditions": {
+        "concentrationRisk": "91.3",
+        "velocityRisk": "1.0",
+        "largeTransferRisk": "4.0"
+      }
+    },
+    {
+      "price": 96.69,
+      "timestamp": "11/17/2025, 12:53:02 PM",
+      "volume24h": 1030033,
+      "totalTransactions": 21,
+      "marketConditions": {
+        "concentrationRisk": "91.3",
+        "velocityRisk": "1.0",
+        "largeTransferRisk": "4.0"
+      }
+    },
+    {
+      "price": 93.35,
+      "timestamp": "11/17/2025, 12:53:04 PM",
+      "volume24h": 1030033,
+      "totalTransactions": 21,
+      "marketConditions": {
+        "concentrationRisk": "91.3",
+        "velocityRisk": "1.0",
+        "largeTransferRisk": "4.0"
+      }
+    },
+    {
+      "price": 97.46,
+      "timestamp": "11/17/2025, 12:53:04 PM",
+      "volume24h": 1030033,
+      "totalTransactions": 21,
+      "marketConditions": {
+        "concentrationRisk": "91.3",
+        "velocityRisk": "1.0",
+        "largeTransferRisk": "4.0"
+      }
+    },
+    {
+      "price": 100.56,
+      "timestamp": "11/17/2025, 12:53:55 PM",
+      "volume24h": 1030033,
+      "totalTransactions": 21,
+      "marketConditions": {
+        "concentrationRisk": "91.3",
+        "velocityRisk": "1.0",
+        "largeTransferRisk": "4.0"
+      }
+    },
+    {
+      "price": 107.47,
+      "timestamp": "11/17/2025, 12:53:55 PM",
+      "volume24h": 1030033,
+      "totalTransactions": 21,
+      "marketConditions": {
+        "concentrationRisk": "91.3",
+        "velocityRisk": "1.0",
+        "largeTransferRisk": "4.0"
+      }
+    },
+    {
+      "price": 101.61,
+      "timestamp": "11/17/2025, 12:53:55 PM",
+      "volume24h": 1030033,
+      "totalTransactions": 21,
+      "marketConditions": {
+        "concentrationRisk": "91.3",
+        "velocityRisk": "1.0",
+        "largeTransferRisk": "4.0"
+      }
+    },
+    {
+      "price": 102.2,
+      "timestamp": "11/17/2025, 12:53:55 PM",
+      "volume24h": 1030033,
+      "totalTransactions": 21,
+      "marketConditions": {
+        "concentrationRisk": "91.3",
+        "velocityRisk": "1.0",
+        "largeTransferRisk": "4.0"
+      }
+    },
+    {
+      "price": 104.6,
+      "timestamp": "11/17/2025, 12:53:55 PM",
+      "volume24h": 1030033,
+      "totalTransactions": 21,
+      "marketConditions": {
+        "concentrationRisk": "91.3",
+        "velocityRisk": "1.0",
+        "largeTransferRisk": "4.0"
+      }
+    },
+    {
+      "price": 107.66,
+      "timestamp": "11/17/2025, 12:53:56 PM",
+      "volume24h": 1030033,
+      "totalTransactions": 21,
+      "marketConditions": {
+        "concentrationRisk": "91.3",
+        "velocityRisk": "1.0",
+        "largeTransferRisk": "4.0"
+      }
+    },
+    {
+      "price": 107.09,
+      "timestamp": "11/17/2025, 12:53:56 PM",
+      "volume24h": 1030033,
+      "totalTransactions": 21,
+      "marketConditions": {
+        "concentrationRisk": "91.3",
+        "velocityRisk": "1.0",
+        "largeTransferRisk": "4.0"
+      }
+    },
+    {
+      "price": 100.4,
+      "timestamp": "11/17/2025, 12:53:56 PM",
+      "volume24h": 1030033,
+      "totalTransactions": 21,
+      "marketConditions": {
+        "concentrationRisk": "91.3",
+        "velocityRisk": "1.0",
+        "largeTransferRisk": "4.0"
+      }
+    },
+    {
+      "price": 101.49,
+      "timestamp": "11/17/2025, 12:53:56 PM",
+      "volume24h": 1030033,
+      "totalTransactions": 21,
+      "marketConditions": {
+        "concentrationRisk": "91.3",
+        "velocityRisk": "1.0",
+        "largeTransferRisk": "4.0"
+      }
+    },
+    {
+      "price": 101.82,
+      "timestamp": "11/17/2025, 12:53:56 PM",
+      "volume24h": 1030033,
+      "totalTransactions": 21,
+      "marketConditions": {
+        "concentrationRisk": "91.3",
+        "velocityRisk": "1.0",
+        "largeTransferRisk": "4.0"
+      }
+    },
+    {
+      "price": 105.98,
+      "timestamp": "11/17/2025, 12:53:57 PM",
+      "volume24h": 1030033,
+      "totalTransactions": 21,
+      "marketConditions": {
+        "concentrationRisk": "91.3",
+        "velocityRisk": "1.0",
+        "largeTransferRisk": "4.0"
+      }
+    },
+    {
+      "price": 108.18,
+      "timestamp": "11/17/2025, 12:53:57 PM",
+      "volume24h": 1030033,
+      "totalTransactions": 21,
+      "marketConditions": {
+        "concentrationRisk": "91.3",
+        "velocityRisk": "1.0",
+        "largeTransferRisk": "4.0"
+      }
+    },
+    {
+      "price": 105.21,
+      "timestamp": "11/17/2025, 12:53:57 PM",
+      "volume24h": 1030033,
+      "totalTransactions": 21,
+      "marketConditions": {
+        "concentrationRisk": "91.3",
+        "velocityRisk": "1.0",
+        "largeTransferRisk": "4.0"
+      }
+    },
+    {
+      "price": 104.46,
+      "timestamp": "11/17/2025, 12:53:57 PM",
+      "volume24h": 1030033,
+      "totalTransactions": 21,
+      "marketConditions": {
+        "concentrationRisk": "91.3",
+        "velocityRisk": "1.0",
+        "largeTransferRisk": "4.0"
+      }
+    },
+    {
+      "price": 106.47,
+      "timestamp": "11/17/2025, 12:53:57 PM",
+      "volume24h": 1030033,
+      "totalTransactions": 21,
+      "marketConditions": {
+        "concentrationRisk": "91.3",
+        "velocityRisk": "1.0",
+        "largeTransferRisk": "4.0"
+      }
+    },
+    {
+      "price": 102.03,
+      "timestamp": "11/17/2025, 12:53:58 PM",
+      "volume24h": 1030033,
+      "totalTransactions": 21,
+      "marketConditions": {
+        "concentrationRisk": "91.3",
+        "velocityRisk": "1.0",
+        "largeTransferRisk": "4.0"
+      }
+    },
+    {
+      "price": 93.37,
+      "timestamp": "11/17/2025, 12:53:58 PM",
+      "volume24h": 1030033,
+      "totalTransactions": 21,
+      "marketConditions": {
+        "concentrationRisk": "91.3",
+        "velocityRisk": "1.0",
+        "largeTransferRisk": "4.0"
+      }
+    },
+    {
+      "price": 95.65,
+      "timestamp": "11/17/2025, 12:53:58 PM",
+      "volume24h": 1030033,
+      "totalTransactions": 21,
+      "marketConditions": {
+        "concentrationRisk": "91.3",
+        "velocityRisk": "1.0",
+        "largeTransferRisk": "4.0"
+      }
+    },
+    {
+      "price": 106.02,
+      "timestamp": "11/17/2025, 12:53:58 PM",
+      "volume24h": 1030033,
+      "totalTransactions": 21,
+      "marketConditions": {
+        "concentrationRisk": "91.3",
+        "velocityRisk": "1.0",
+        "largeTransferRisk": "4.0"
+      }
+    },
+    {
+      "price": 102.62,
+      "timestamp": "11/17/2025, 12:53:58 PM",
+      "volume24h": 1030033,
+      "totalTransactions": 21,
+      "marketConditions": {
+        "concentrationRisk": "91.3",
+        "velocityRisk": "1.0",
+        "largeTransferRisk": "4.0"
+      }
+    },
+    {
+      "price": 102.31,
+      "timestamp": "11/17/2025, 12:53:59 PM",
+      "volume24h": 1030033,
+      "totalTransactions": 21,
+      "marketConditions": {
+        "concentrationRisk": "91.3",
+        "velocityRisk": "1.0",
+        "largeTransferRisk": "4.0"
+      }
+    },
+    {
+      "price": 103.46,
+      "timestamp": "11/17/2025, 12:54:07 PM",
+      "volume24h": 1030033,
+      "totalTransactions": 21,
+      "marketConditions": {
+        "concentrationRisk": "91.3",
+        "velocityRisk": "1.0",
+        "largeTransferRisk": "4.0"
+      }
+    },
+    {
+      "price": 107.3,
+      "timestamp": "11/17/2025, 12:54:08 PM",
+      "volume24h": 1030033,
+      "totalTransactions": 21,
+      "marketConditions": {
+        "concentrationRisk": "91.3",
+        "velocityRisk": "1.0",
+        "largeTransferRisk": "4.0"
+      }
+    },
+    {
+      "price": 104.15,
+      "timestamp": "11/17/2025, 12:54:18 PM",
+      "volume24h": 1030033,
+      "totalTransactions": 21,
+      "marketConditions": {
+        "concentrationRisk": "91.3",
+        "velocityRisk": "1.0",
+        "largeTransferRisk": "4.0"
+      }
+    },
+    {
+      "price": 107.87,
+      "timestamp": "11/17/2025, 12:54:48 PM",
+      "volume24h": 1030033,
+      "totalTransactions": 21,
+      "marketConditions": {
+        "concentrationRisk": "91.3",
+        "velocityRisk": "1.0",
+        "largeTransferRisk": "4.0"
+      }
+    }
+  ],
+  "operationHistory": [],
+  "lastPrice": 107.87,
+  "lastTransactionPrice": 100,
+  "timestamp": "2025-11-17T07:24:48.598Z"
+}

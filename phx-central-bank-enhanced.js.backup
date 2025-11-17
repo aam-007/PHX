@@ -1,0 +1,893 @@
+// phx-central-bank-full.js
+// PHX Central Bank Console - Full UI + Real Blockchain Transaction History
+const { ethers, network } = require("hardhat");
+const readline = require("readline");
+const chalk = require("chalk");
+const figlet = require("figlet");
+const ora = require("ora");
+const Table = require("cli-table3");
+
+const CONFIG = {
+  PHX_TOKEN_ADDRESS: "0x6652bfFF72971c548Fb70247abEA69A45427dB50",
+  CENTRAL_BANK_ADDRESS: "0x7DB0be542A76eBCA2eE2AB13DCB7809E15C12A04",
+  NETWORK: "ganache"
+};
+
+class PHXCentralBank {
+  constructor() {
+    this.phx = null;
+    this.cb = null;
+    this.owner = null;
+    this.availableAccounts = [];
+    this.transactionLedger = [];
+    this.rl = readline.createInterface({ 
+      input: process.stdin, 
+      output: process.stdout 
+    });
+
+    this.theme = {
+      title: chalk.blueBright,
+      section: chalk.cyanBright,
+      label: chalk.yellow,
+      value: chalk.white,
+      ok: chalk.greenBright,
+      warn: chalk.yellowBright,
+      err: chalk.redBright,
+      dim: chalk.gray,
+      highlight: chalk.bgBlue.white
+    };
+
+    this.currentPage = 0;
+    this.pageSize = 10;
+  }
+
+  // ---------- UI Helpers ----------
+  fancyTitle(text) {
+    try {
+      const fig = figlet.textSync(text, { font: "Small", horizontalLayout: "fitted" });
+      console.log(this.theme.title(fig));
+    } catch {
+      console.log(this.theme.title(`\n${text}\n`));
+    }
+  }
+
+  section(title) {
+    const border = "─".repeat(58);
+    console.log("\n" + this.theme.title("┌" + border + "┐"));
+    console.log(this.theme.title("│") + " " + this.theme.section.bold(title.padEnd(56)) + this.theme.title("│"));
+    console.log(this.theme.title("└" + border + "┘") + "\n");
+  }
+
+  smallNote(msg) { console.log(this.theme.dim(`${msg}`)); }
+  error(msg) { console.log(this.theme.err(` ${msg}`)); }
+  success(msg) { console.log(this.theme.ok(` ${msg}`)); }
+  clearScreen() { console.clear(); }
+  
+  question(prompt) { 
+    return new Promise(resolve => this.rl.question(this.theme.label(prompt), resolve)); 
+  }
+
+  async getAddressFromUser(prompt) {
+    while (true) {
+      const input = (await this.question(prompt)).trim();
+      if (!isNaN(input) && input !== "") {
+        const idx = parseInt(input);
+        if (idx >= 0 && idx < this.availableAccounts.length) {
+          return this.availableAccounts[idx].address;
+        }
+      }
+      if (ethers.isAddress(input)) {
+        return input;
+      }
+      this.error(`Invalid address/index. Valid index: 0-${this.availableAccounts.length - 1}.`);
+    }
+  }
+
+  async getAmountFromUser(prompt) {
+    while (true) {
+      const input = (await this.question(prompt)).trim();
+      if (!isNaN(input) && parseFloat(input) > 0) {
+        return input;
+      }
+      this.error("Invalid amount. Enter a positive number.");
+    }
+  }
+
+  // ---------- Initialization ----------
+  async initialize() {
+    this.clearScreen();
+    this.fancyTitle("PHX CENTRAL BANK");
+    console.log(this.theme.dim("=".repeat(64)));
+    console.log(this.theme.value("Starting PHX Central Bank Console..."));
+    console.log(this.theme.warn(" Treasury operations are restricted to authorized accounts only"));
+    console.log(this.theme.dim("=".repeat(64) + "\n"));
+
+    const spinner = ora("Connecting to local node and loading accounts...").start();
+    try {
+      this.availableAccounts = await ethers.getSigners();
+      this.owner = this.availableAccounts[0];
+
+      const PHX = await ethers.getContractFactory("PhonexCoin");
+      this.phx = await PHX.attach(CONFIG.PHX_TOKEN_ADDRESS);
+
+      const CentralBank = await ethers.getContractFactory("PhonexCentralBank");
+      this.cb = await CentralBank.attach(CONFIG.CENTRAL_BANK_ADDRESS);
+
+      spinner.succeed("Accounts loaded & contracts attached successfully");
+
+      const treasuryBal = await this.phx.balanceOf(this.owner.address);
+      console.log(this.theme.label(" Treasury Balance: ") + this.theme.ok(ethers.formatUnits(treasuryBal, 18) + " PHX"));
+      console.log(this.theme.label("PHX Token: ") + this.theme.value(CONFIG.PHX_TOKEN_ADDRESS));
+      console.log(this.theme.label("Central Bank: ") + this.theme.value(CONFIG.CENTRAL_BANK_ADDRESS));
+
+      // Load REAL blockchain transaction history
+      await this.loadBlockchainTransactionHistory();
+
+      return true;
+    } catch (error) {
+      spinner.fail("Initialization failed");
+      this.error(error?.message || String(error));
+      return false;
+    }
+  }
+
+  // ---------- REAL BLOCKCHAIN TRANSACTION HISTORY ----------
+  async loadBlockchainTransactionHistory() {
+    const spinner = ora("Loading blockchain transaction history...").start();
+    try {
+      this.transactionLedger = [];
+      
+      // Get Transfer events from PHX token (all historical transfers)
+      const transferFilter = this.phx.filters.Transfer();
+      const transferEvents = await this.phx.queryFilter(transferFilter, 0, 'latest');
+      
+      for (const event of transferEvents) {
+        const block = await event.getBlock();
+        const timestamp = new Date(block.timestamp * 1000).toLocaleString();
+        
+        // Determine transaction type based on participants
+        let type = "Transfer";
+        if (event.args.from === this.owner.address) {
+          type = "Treasury Transfer";
+        } else if (event.args.to === await this.cb.getAddress()) {
+          type = "QT Absorption";
+        } else if (event.args.from === await this.cb.getAddress()) {
+          type = "QE Injection";
+        }
+
+        this.transactionLedger.push({
+          timestamp,
+          type,
+          from: event.args.from,
+          target: event.args.to,
+          amount: ethers.formatUnits(event.args.value, 18),
+          fee: "0",
+          net: ethers.formatUnits(event.args.value, 18),
+          txHash: event.transactionHash,
+          status: 'Confirmed',
+          blockNumber: event.blockNumber
+        });
+      }
+
+      // Try to get Central Bank specific events if they exist
+      try {
+        // Check if inject events exist
+        const injectEvents = await this.cb.queryFilter(this.cb.filters.Inject(), 0, 'latest');
+        for (const event of injectEvents) {
+          const block = await event.getBlock();
+          const timestamp = new Date(block.timestamp * 1000).toLocaleString();
+          
+          this.transactionLedger.push({
+            timestamp,
+            type: "QE Operation",
+            from: await this.cb.getAddress(),
+            target: event.args.to || event.args.recipient,
+            amount: ethers.formatUnits(event.args.amount, 18),
+            fee: "0",
+            net: ethers.formatUnits(event.args.amount, 18),
+            txHash: event.transactionHash,
+            status: 'Confirmed',
+            blockNumber: event.blockNumber
+          });
+        }
+      } catch (e) {
+        // Inject events might not be defined in the contract
+      }
+
+      try {
+        // Check if absorb events exist
+        const absorbEvents = await this.cb.queryFilter(this.cb.filters.Absorb(), 0, 'latest');
+        for (const event of absorbEvents) {
+          const block = await event.getBlock();
+          const timestamp = new Date(block.timestamp * 1000).toLocaleString();
+          
+          this.transactionLedger.push({
+            timestamp,
+            type: "QT Operation",
+            from: event.args.from || event.args.target,
+            target: await this.cb.getAddress(),
+            amount: ethers.formatUnits(event.args.amount, 18),
+            fee: "0",
+            net: ethers.formatUnits(event.args.amount, 18),
+            txHash: event.transactionHash,
+            status: 'Confirmed',
+            blockNumber: event.blockNumber
+          });
+        }
+      } catch (e) {
+        // Absorb events might not be defined in the contract
+      }
+
+      // Sort by block number (chronological order)
+      this.transactionLedger.sort((a, b) => b.blockNumber - a.blockNumber);
+
+      spinner.succeed(`Loaded ${this.transactionLedger.length} historical transactions from blockchain`);
+      
+    } catch (error) {
+      spinner.fail("Failed to load blockchain history");
+      this.error("Blockchain history loading: " + error.message);
+      // Continue with empty ledger rather than failing completely
+    }
+  }
+
+  // ---------- Add New Transaction to Ledger ----------
+  async addBlockchainTransaction(txHash, type, target, amount) {
+    try {
+      const receipt = await ethers.provider.getTransactionReceipt(txHash);
+      const block = await ethers.provider.getBlock(receipt.blockNumber);
+      const timestamp = new Date(block.timestamp * 1000).toLocaleString();
+
+      this.transactionLedger.unshift({
+        timestamp,
+        type,
+        from: this.owner.address,
+        target,
+        amount,
+        fee: "0",
+        net: amount,
+        txHash,
+        status: 'Confirmed',
+        blockNumber: receipt.blockNumber
+      });
+
+      // Keep ledger sorted by block number
+      this.transactionLedger.sort((a, b) => b.blockNumber - a.blockNumber);
+    } catch (error) {
+      // Fallback: add with current time if blockchain data unavailable
+      const timestamp = new Date().toLocaleString();
+      this.transactionLedger.unshift({
+        timestamp,
+        type,
+        from: this.owner.address,
+        target,
+        amount,
+        fee: "0",
+        net: amount,
+        txHash,
+        status: 'Pending',
+        blockNumber: 0
+      });
+    }
+  }
+
+  // ---------- Ledger Management ----------
+  getTotalPages() { 
+    return Math.ceil(this.transactionLedger.length / this.pageSize) || 1; 
+  }
+
+  getCurrentPageTransactions() {
+    const start = this.currentPage * this.pageSize;
+    const end = start + this.pageSize;
+    return this.transactionLedger.slice(start, end);
+  }
+
+  displayTransactionTable(transactions) {
+    if (transactions.length === 0) { 
+      this.smallNote("No transactions found on blockchain."); 
+      return; 
+    }
+
+    const table = new Table({
+      head: ['Time', 'Type', 'From', 'To', 'Amount (PHX)', 'Block', 'Status'].map(h => this.theme.highlight(h)),
+      colWidths: [20, 18, 24, 24, 15, 8, 12],
+      wordWrap: true
+    });
+
+    transactions.forEach(tx => {
+      const typeColor = { 
+        'Treasury Transfer': chalk.cyan, 
+        'QE Operation': chalk.green, 
+        'QT Operation': chalk.yellow, 
+        'Transfer': chalk.blue,
+        'QE Injection': chalk.green,
+        'QT Absorption': chalk.yellow,
+        'Inflation Mint': chalk.magenta, 
+        'Emergency Mint': chalk.red
+      }[tx.type] || chalk.white;
+
+      const statusColor = tx.status === 'Confirmed' ? chalk.green : 
+                         tx.status === 'Pending' ? chalk.yellow : chalk.red;
+
+      const shortFrom = tx.from.length > 20 ? 
+        tx.from.slice(0, 8) + '...' + tx.from.slice(-6) : tx.from;
+      const shortTo = tx.target.length > 20 ? 
+        tx.target.slice(0, 8) + '...' + tx.target.slice(-6) : tx.target;
+
+      table.push([
+        chalk.gray(tx.timestamp),
+        typeColor(tx.type),
+        chalk.blue(shortFrom),
+        chalk.cyan(shortTo),
+        chalk.bold(tx.amount),
+        chalk.dim(tx.blockNumber || 'Pending'),
+        statusColor(tx.status)
+      ]);
+    });
+
+    console.log(table.toString());
+  }
+
+  displayTransactionDetails(transaction) {
+    this.section(`BLOCKCHAIN TRANSACTION DETAILS`);
+    const detailsTable = new Table({ colWidths: [20, 50] });
+    
+    detailsTable.push(
+      [this.theme.label('Time'), this.theme.value(transaction.timestamp)],
+      [this.theme.label('Type'), this.theme.value(transaction.type)],
+      [this.theme.label('From'), this.theme.value(transaction.from)],
+      [this.theme.label('To'), this.theme.value(transaction.target)],
+      [this.theme.label('Amount'), this.theme.ok(transaction.amount + ' PHX')],
+      [this.theme.label('Block'), this.theme.value(transaction.blockNumber || 'Pending')],
+      [this.theme.label('Status'), this.theme.ok(transaction.status)],
+      [this.theme.label('TX Hash'), this.theme.value(transaction.txHash)]
+    );
+    
+    console.log(detailsTable.toString());
+
+    // Show additional blockchain context
+    if (transaction.blockNumber && transaction.blockNumber > 0) {
+      console.log(this.theme.dim(`\n🔗 This transaction is permanently recorded on block ${transaction.blockNumber}`));
+    }
+  }
+
+  async showInteractiveLedger() {
+    if (this.transactionLedger.length === 0) {
+      this.section("BLOCKCHAIN TRANSACTION HISTORY");
+      this.smallNote("No transactions found on the blockchain.");
+      await this.question(this.theme.dim("\nPress Enter to return to menu..."));
+      return;
+    }
+
+    let currentSelection = 0;
+    let viewingDetails = false;
+    let currentTransaction = null;
+
+    const renderLedgerScreen = () => {
+      this.clearScreen();
+      this.section("BLOCKCHAIN TRANSACTION HISTORY - REAL DATA");
+
+      const totalPages = this.getTotalPages();
+      const pageTransactions = this.getCurrentPageTransactions();
+      
+      if (viewingDetails && currentTransaction) {
+        this.displayTransactionDetails(currentTransaction);
+      } else {
+        this.displayTransactionTable(pageTransactions);
+        
+        // Highlight current selection
+        if (pageTransactions.length > 0 && currentSelection >= 0 && currentSelection < pageTransactions.length) {
+          console.log(this.theme.highlight(`\n → Selected: ${pageTransactions[currentSelection].type} - ${pageTransactions[currentSelection].amount} PHX`));
+        }
+      }
+
+      // Footer with navigation instructions
+      console.log(this.theme.dim("\n" + "─".repeat(100)));
+      if (viewingDetails) {
+        console.log(this.theme.warn("Navigation: [ESC] Back to list • [Q] Return to menu"));
+      } else {
+        console.log(this.theme.warn("Navigation: [↑↓] Select • [→] Next page • [←] Prev page • [ENTER] View details • [Q] Return to menu"));
+        console.log(this.theme.dim(`Page ${this.currentPage + 1} of ${totalPages} • ${this.transactionLedger.length} blockchain transactions`));
+        console.log(this.theme.dim("All transactions are read directly from the blockchain"));
+      }
+    };
+
+    // Set up raw mode for keypress events
+    process.stdin.setRawMode(true);
+    process.stdin.resume();
+
+    return new Promise((resolve) => {
+      const keyHandler = (data) => {
+        const key = data.toString();
+        
+        // Exit conditions
+        if (key === 'q' || key === 'Q') {
+          process.stdin.setRawMode(false);
+          process.stdin.removeListener('data', keyHandler);
+          this.clearScreen();
+          resolve();
+          return;
+        }
+
+        if (viewingDetails) {
+          // In details view - only ESC to go back
+          if (key === '\u001b') { // ESC key
+            viewingDetails = false;
+            currentTransaction = null;
+            renderLedgerScreen();
+          }
+          return;
+        }
+
+        // Navigation in list view
+        switch (key) {
+          case '\u001b[A': // Up arrow
+            if (currentSelection > 0) {
+              currentSelection--;
+              renderLedgerScreen();
+            }
+            break;
+
+          case '\u001b[B': // Down arrow
+            const pageTransactions = this.getCurrentPageTransactions();
+            if (currentSelection < pageTransactions.length - 1) {
+              currentSelection++;
+              renderLedgerScreen();
+            }
+            break;
+
+          case '\u001b[C': // Right arrow - next page
+            if (this.currentPage < this.getTotalPages() - 1) {
+              this.currentPage++;
+              currentSelection = 0;
+              renderLedgerScreen();
+            }
+            break;
+
+          case '\u001b[D': // Left arrow - previous page
+            if (this.currentPage > 0) {
+              this.currentPage--;
+              currentSelection = 0;
+              renderLedgerScreen();
+            }
+            break;
+
+          case '\r': // Enter key - view details
+          case '\n':
+            const selectedTx = this.getCurrentPageTransactions()[currentSelection];
+            if (selectedTx) {
+              viewingDetails = true;
+              currentTransaction = selectedTx;
+              renderLedgerScreen();
+            }
+            break;
+
+          case 'r': // Refresh - reload from blockchain
+          case 'R':
+            process.stdin.setRawMode(false);
+            process.stdin.removeListener('data', keyHandler);
+            this.loadBlockchainTransactionHistory().then(() => {
+              this.showInteractiveLedger().then(resolve);
+            });
+            return;
+        }
+      };
+
+      process.stdin.on('data', keyHandler);
+      renderLedgerScreen();
+    });
+  }
+
+  // ---------- System Status ----------
+  async checkSystemStatus() {
+    this.section("SYSTEM STATUS & BLOCKCHAIN DATA");
+    try {
+      const totalSupply = await this.phx.totalSupply();
+      const treasuryBal = await this.phx.balanceOf(this.owner.address);
+      const cbReserves = await this.phx.balanceOf(await this.cb.getAddress());
+
+      console.log(this.theme.section("  Ownership & Governance:"));
+      console.log("  PHX Owner:", this.theme.value(await this.phx.owner()));
+      console.log("  Treasury:", this.theme.value(await this.phx.treasury()));
+      console.log("  Central Bank Governor:", this.theme.value(await this.cb.governor()));
+
+      console.log(this.theme.section("\n Treasury & Supply:"));
+      console.log("  Treasury Balance:", this.theme.ok(ethers.formatUnits(treasuryBal, 18) + " PHX"));
+      console.log("  Total Supply:", this.theme.value(ethers.formatUnits(totalSupply, 18) + " PHX"));
+      console.log("  Central Bank Reserves:", this.theme.value(ethers.formatUnits(cbReserves, 18) + " PHX"));
+
+      // Show recent blockchain transactions
+      if (this.transactionLedger.length > 0) {
+        console.log(this.theme.section("\n Recent Blockchain Transactions:"));
+        const recentTxs = this.transactionLedger.slice(0, 3);
+        recentTxs.forEach(tx => {
+          const fromShort = tx.from.slice(0, 6) + '...' + tx.from.slice(-4);
+          const toShort = tx.target.slice(0, 6) + '...' + tx.target.slice(-4);
+          console.log(`  ${tx.timestamp} - ${tx.type}: ${tx.amount} PHX (${fromShort}→${toShort})`);
+        });
+        if (this.transactionLedger.length > 3) {
+          console.log(this.theme.dim(`  ... and ${this.transactionLedger.length - 3} more historical transactions`));
+        }
+      } else {
+        console.log(this.theme.section("\n Blockchain Data:"));
+        console.log(this.theme.dim("  No historical transactions found on blockchain"));
+      }
+
+    } catch (error) { 
+      this.error(error?.message || String(error)); 
+    }
+  }
+
+  // ---------- Treasury Transfer ----------
+async treasuryToWallet() {
+  this.section("TREASURY → WALLET TRANSFER");
+  try {
+    // Display available wallets (excluding treasury)
+    console.log(this.theme.section("Available Wallets:"));
+    const walletTable = new Table({
+      head: ['Index', 'Address', 'Balance (PHX)'].map(h => this.theme.highlight(h)),
+      colWidths: [8, 42, 20],
+      wordWrap: true
+    });
+
+    // Show all accounts except treasury (index 0)
+    for (let i = 1; i < this.availableAccounts.length; i++) {
+      const account = this.availableAccounts[i];
+      const balance = await this.phx.balanceOf(account.address);
+      const shortAddress = account.address.slice(0, 8) + '...' + account.address.slice(-6);
+      walletTable.push([
+        chalk.cyan(i - 1), // Adjust index to start from 0 for wallets
+        chalk.blue(shortAddress),
+        chalk.bold(ethers.formatUnits(balance, 18))
+      ]);
+    }
+    console.log(walletTable.toString());
+
+    // Get recipient with wallet-friendly prompt
+    const recipient = await this.getAddressFromUser("\n Enter recipient (index 0-" + (this.availableAccounts.length - 2) + " or address): ");
+    const amountStr = await this.getAmountFromUser(" Amount to transfer (PHX): ");
+    const amountWei = ethers.parseUnits(amountStr, 18);
+
+    // Check treasury balance
+    const treasuryBalance = await this.phx.balanceOf(this.owner.address);
+    if (treasuryBalance < amountWei) {
+      this.error(`Insufficient treasury balance. Available: ${ethers.formatUnits(treasuryBalance, 18)} PHX`);
+      return;
+    }
+
+    console.log(this.theme.dim("\n Transfer Summary:"));
+    console.log("  From:", this.theme.value(this.owner.address + " 🏦"));
+    console.log("  To:", this.theme.value(recipient));
+    console.log("  Amount:", this.theme.value(amountStr + " PHX"));
+
+    const confirm = (await this.question(this.theme.warn("❓ Confirm transfer? (y/n): "))).trim().toLowerCase();
+    if (!["y", "yes"].includes(confirm)) { 
+      this.smallNote("Transfer cancelled."); 
+      return; 
+    }
+
+    const spinner = ora("Processing transfer on blockchain...").start();
+    const tx = await this.phx.transfer(recipient, amountWei);
+    await tx.wait();
+    spinner.succeed("Transfer confirmed on blockchain!");
+
+    // Add to blockchain transaction history
+    await this.addBlockchainTransaction(tx.hash, "Treasury Transfer", recipient, amountStr);
+
+    const newTreasuryBal = await this.phx.balanceOf(this.owner.address);
+    const recipientBal = await this.phx.balanceOf(recipient);
+
+    console.log(this.theme.section("\n Updated Balances:"));
+    console.log("  Treasury Balance:", this.theme.ok(ethers.formatUnits(newTreasuryBal, 18) + " PHX"));
+    console.log("  Recipient Balance:", this.theme.ok(ethers.formatUnits(recipientBal, 18) + " PHX"));
+    console.log(this.theme.dim(`  Transaction Hash: ${tx.hash}`));
+    
+  } catch (error) { 
+    this.error("Transfer failed: " + (error?.message || String(error))); 
+  }
+}
+
+
+
+  // ---------- Quantitative Easing ----------
+  async quantitativeEasing() {
+    this.section("QUANTITATIVE EASING (QE)");
+    try {
+      const recipient = await this.getAddressFromUser(" Recipient address: ");
+      const amountStr = await this.getAmountFromUser(" Amount to inject (PHX): ");
+      const amountWei = ethers.parseUnits(amountStr, 18);
+
+      // Check treasury balance first
+      const treasuryBalance = await this.phx.balanceOf(this.owner.address);
+      if (treasuryBalance < amountWei) {
+        this.error(`Insufficient treasury balance. Available: ${ethers.formatUnits(treasuryBalance, 18)} PHX`);
+        return;
+      }
+
+      console.log(this.theme.dim("\n QE Operation Summary:"));
+      console.log("  Recipient:", this.theme.value(recipient));
+      console.log("  Amount:", this.theme.value(amountStr + " PHX"));
+
+      const confirm = (await this.question(this.theme.warn(" Confirm QE operation? (y/n): "))).trim().toLowerCase();
+      if (!["y", "yes"].includes(confirm)) { 
+        this.smallNote("QE operation cancelled."); 
+        return; 
+      }
+
+      const spinner = ora("Executing Quantitative Easing on blockchain...").start();
+      
+      // Fund central bank from treasury
+      const fundTx = await this.phx.transfer(await this.cb.getAddress(), amountWei);
+      await fundTx.wait();
+      
+      // Inject liquidity
+      const injectTx = await this.cb.inject(recipient, amountWei);
+      await injectTx.wait();
+      
+      spinner.succeed("QE operation confirmed on blockchain!");
+
+      // Add to blockchain transaction history
+      await this.addBlockchainTransaction(injectTx.hash, "QE Operation", recipient, amountStr);
+
+      const recipientBal = await this.phx.balanceOf(recipient);
+      const cbReserves = await this.phx.balanceOf(await this.cb.getAddress());
+
+      console.log(this.theme.section("\n📊 Operation Results:"));
+      console.log("  Recipient Balance:", this.theme.ok(ethers.formatUnits(recipientBal, 18) + " PHX"));
+      console.log("  Central Bank Reserves:", this.theme.value(ethers.formatUnits(cbReserves, 18) + " PHX"));
+      console.log(this.theme.dim(`  Transaction Hash: ${injectTx.hash}`));
+      
+    } catch (error) { 
+      this.error("QE operation failed: " + (error?.message || String(error))); 
+    }
+  }
+
+  // ---------- Quantitative Tightening ----------
+  async quantitativeTightening() {
+    this.section("QUANTITATIVE TIGHTENING (QT)");
+    try {
+      const target = await this.getAddressFromUser(" Target address for QT: ");
+      const amountStr = await this.getAmountFromUser(" Amount to absorb (PHX): ");
+      const amountWei = ethers.parseUnits(amountStr, 18);
+
+      // Check target balance
+      const targetBalance = await this.phx.balanceOf(target);
+      if (targetBalance < amountWei) {
+        this.error(`Insufficient target balance. Available: ${ethers.formatUnits(targetBalance, 18)} PHX`);
+        return;
+      }
+
+      // Find the signer for approval
+      const targetSigner = this.availableAccounts.find(acc => 
+        acc.address.toLowerCase() === target.toLowerCase()
+      );
+      
+      if (!targetSigner) {
+        this.error("Target address must be in available accounts for approval.");
+        return;
+      }
+
+      console.log(this.theme.dim("\n QT Operation Summary:"));
+      console.log("  Target:", this.theme.value(target));
+      console.log("  Amount:", this.theme.value(amountStr + " PHX"));
+
+      const confirm = (await this.question(this.theme.warn("❓ Confirm QT operation? (y/n): "))).trim().toLowerCase();
+      if (!["y", "yes"].includes(confirm)) { 
+        this.smallNote("QT operation cancelled."); 
+        return; 
+      }
+
+      const spinner = ora("Executing Quantitative Tightening on blockchain...").start();
+      
+      // Get approval from target
+      const approveTx = await this.phx.connect(targetSigner).approve(await this.cb.getAddress(), amountWei);
+      await approveTx.wait();
+      
+      // Absorb liquidity
+      const absorbTx = await this.cb.absorb(target, amountWei);
+      await absorbTx.wait();
+      
+      spinner.succeed("QT operation confirmed on blockchain!");
+
+      const newTargetBal = await this.phx.balanceOf(target);
+      const cbReserves = await this.phx.balanceOf(await this.cb.getAddress());
+
+      // Add to blockchain transaction history
+      await this.addBlockchainTransaction(absorbTx.hash, "QT Operation", target, amountStr);
+
+      console.log(this.theme.section("\n Operation Results:"));
+      console.log("  Target New Balance:", this.theme.ok(ethers.formatUnits(newTargetBal, 18) + " PHX"));
+      console.log("  Central Bank Reserves:", this.theme.value(ethers.formatUnits(cbReserves, 18) + " PHX"));
+      console.log(this.theme.dim(`  Transaction Hash: ${absorbTx.hash}`));
+      
+    } catch (error) { 
+      this.error("QT operation failed: " + (error?.message || String(error))); 
+    }
+  }
+
+  // ---------- Mint Annual Inflation ----------
+  async mintAnnualInflation() {
+    this.section("MINT ANNUAL INFLATION (2.5%)");
+    try {
+      console.log(this.theme.warn("  This will fast-forward time by 1 year for testing purposes"));
+
+      const confirm = (await this.question(this.theme.warn(" Confirm inflation mint? (y/n): "))).trim().toLowerCase();
+      if (!["y", "yes"].includes(confirm)) { 
+        this.smallNote("Inflation mint cancelled."); 
+        return; 
+      }
+
+      const spinner = ora("Minting annual inflation on blockchain...").start();
+      
+      // Fast-forward time for testing
+      await network.provider.send("evm_increaseTime", [365 * 24 * 60 * 60]);
+      await network.provider.send("evm_mine");
+
+      const beforeBal = await this.phx.balanceOf(this.owner.address);
+      const beforeSupply = await this.phx.totalSupply();
+      
+      const tx = await this.phx.mintAnnualInflation();
+      await tx.wait();
+      
+      const afterBal = await this.phx.balanceOf(this.owner.address);
+      const afterSupply = await this.phx.totalSupply();
+
+      spinner.succeed("Annual inflation minted on blockchain!");
+
+      const inflationAmt = afterBal - beforeBal;
+
+      // Add to blockchain transaction history
+      await this.addBlockchainTransaction(tx.hash, "Inflation Mint", this.owner.address, ethers.formatUnits(inflationAmt, 18));
+
+      console.log(this.theme.section("\n Inflation Results:"));
+      console.log("  Inflation Amount:", this.theme.ok(ethers.formatUnits(inflationAmt, 18) + " PHX"));
+      console.log("  New Treasury Balance:", this.theme.ok(ethers.formatUnits(afterBal, 18) + " PHX"));
+      console.log("  New Total Supply:", this.theme.value(ethers.formatUnits(afterSupply, 18) + " PHX"));
+      console.log("  Inflation Rate:", this.theme.value("2.5%"));
+      console.log(this.theme.dim(`  Transaction Hash: ${tx.hash}`));
+      
+    } catch (error) { 
+      this.error("Inflation minting failed: " + (error?.message || String(error))); 
+    }
+  }
+
+  // ---------- Emergency Mint ----------
+  async emergencyMint() {
+    this.section("EMERGENCY MINT (MAX 5% OF SUPPLY)");
+    try {
+      const amountStr = await this.getAmountFromUser(" Emergency mint amount (PHX): ");
+      const amountWei = ethers.parseUnits(amountStr, 18);
+      
+      // Check 5% cap
+      const totalSupply = await this.phx.totalSupply();
+      const maxAllowed = totalSupply / 20n; // 5%
+      
+      if (amountWei > maxAllowed) {
+        this.error(`Exceeds 5% emergency cap! Maximum allowed: ${ethers.formatUnits(maxAllowed, 18)} PHX`);
+        return;
+      }
+
+      console.log(this.theme.dim("\n Emergency Mint Summary:"));
+      console.log("  Amount:", this.theme.value(amountStr + " PHX"));
+      console.log("  Maximum Allowed:", this.theme.value(ethers.formatUnits(maxAllowed, 18) + " PHX"));
+
+      const confirm = (await this.question(this.theme.warn("Confirm emergency mint? (y/n): "))).trim().toLowerCase();
+      if (!["y", "yes"].includes(confirm)) { 
+        this.smallNote("Emergency mint cancelled."); 
+        return; 
+      }
+
+      const spinner = ora("Executing emergency mint on blockchain...").start();
+      
+      const tx = await this.phx.emergencyMint(amountWei);
+      await tx.wait();
+      
+      spinner.succeed("Emergency mint confirmed on blockchain!");
+
+      const newTreasuryBal = await this.phx.balanceOf(this.owner.address);
+      const newSupply = await this.phx.totalSupply();
+
+      // Add to blockchain transaction history
+      await this.addBlockchainTransaction(tx.hash, "Emergency Mint", this.owner.address, amountStr);
+
+      console.log(this.theme.section("\n Mint Results:"));
+      console.log("  New Treasury Balance:", this.theme.ok(ethers.formatUnits(newTreasuryBal, 18) + " PHX"));
+      console.log("  New Total Supply:", this.theme.value(ethers.formatUnits(newSupply, 18) + " PHX"));
+      console.log(this.theme.dim(`  Transaction Hash: ${tx.hash}`));
+      
+    } catch (error) { 
+      this.error("Emergency mint failed: " + (error?.message || String(error))); 
+    }
+  }
+
+  // ---------- Menu ----------
+  async showMenu() {
+    this.section("PHX CENTRAL BANK CONSOLE - BLOCKCHAIN OPERATIONS");
+    console.log("1.  Check System Status & Blockchain Data");
+    console.log("2.   Treasury → Wallet Transfer");
+    console.log("3.  Quantitative Easing (QE)");
+    console.log("4.  Quantitative Tightening (QT)");
+    console.log("5.   Mint Annual Inflation");
+    console.log("6.   Emergency Mint");
+    console.log("7.   View Blockchain Transaction History");
+    console.log("8.   Refresh Blockchain Data");
+    console.log("9.   Exit\n");
+    
+    if (this.transactionLedger.length > 0) {
+      console.log(this.theme.dim(` Blockchain: ${this.transactionLedger.length} historical transactions`));
+    }
+  }
+
+  async handleMenuChoice(choice) {
+    switch (choice) {
+      case "1": 
+        await this.checkSystemStatus(); 
+        break;
+      case "2": 
+        await this.treasuryToWallet(); 
+        break;
+      case "3": 
+        await this.quantitativeEasing(); 
+        break;
+      case "4": 
+        await this.quantitativeTightening(); 
+        break;
+      case "5": 
+        await this.mintAnnualInflation(); 
+        break;
+      case "6": 
+        await this.emergencyMint(); 
+        break;
+      case "7": 
+        await this.showInteractiveLedger();
+        break;
+      case "8":
+        await this.loadBlockchainTransactionHistory();
+        this.success("Blockchain data refreshed successfully!");
+        break;
+      case "9": 
+        console.log(this.theme.ok("\nThank you for using PHX Central Bank Console. Goodbye!"));
+        this.rl.close(); 
+        process.exit(0); 
+        break;
+      default: 
+        this.error("Invalid choice. Please select 1-9."); 
+        break;
+    }
+  }
+
+  async run() {
+    const ok = await this.initialize();
+    if (!ok) { 
+      this.rl.close(); 
+      process.exit(1); 
+    }
+
+    while (true) {
+      this.clearScreen();
+      await this.showMenu();
+      const choice = await this.question("Select operation (1-9): ");
+      await this.handleMenuChoice(choice.trim());
+      await this.question(this.theme.dim("\nPress Enter to continue..."));
+    }
+  }
+}
+
+// ---------- Main ----------
+async function main() {
+  try {
+    const bank = new PHXCentralBank();
+    await bank.run();
+  } catch (error) {
+    console.error(chalk.red("Fatal error:"), error.message);
+    process.exit(1);
+  }
+}
+
+if (require.main === module) {
+  main().catch(error => {
+    console.error(chalk.red("Unhandled error:"), error.message);
+    process.exit(1);
+  });
+}
+
+module.exports = PHXCentralBank;

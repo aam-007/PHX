@@ -1,0 +1,1780 @@
+// phx-central-bank-enhanced.js
+// PHX Central Bank Console - Enhanced with Price Oracle & Market Analytics
+const { ethers, network } = require("hardhat");
+const readline = require("readline");
+const chalk = require("chalk");
+const figlet = require("figlet");
+const ora = require("ora");
+const Table = require("cli-table3");
+const fs = require("fs");
+const path = require("path");
+
+const CONFIG = {
+  PHX_TOKEN_ADDRESS: "0x6652bfFF72971c548Fb70247abEA69A45427dB50",
+  CENTRAL_BANK_ADDRESS: "0x7DB0be542A76eBCA2eE2AB13DCB7809E15C12A04",
+  NETWORK: "ganache",
+  SHARED_DATA_FILE: "./phx_price.json"  // Single shared file for both systems
+};
+
+// Enhanced Price Oracle with Crash Mechanisms and Shared Data Persistence
+class PHXPriceOracle {
+  constructor(phxContract, availableAccounts) {
+    this.phx = phxContract;
+    this.availableAccounts = availableAccounts;
+    this.basePriceUSD = 100; // 1 PHX = 100 USD base peg
+    this.transactionHistory = [];
+    this.volume24h = 0;
+    this.totalTransactions = 0;
+    this.totalVolume = 0;
+    this.lastPrice = 100;
+    this.priceHistory = [];
+    this.operationHistory = []; // Track central bank operations
+    this.lastTransactionPrice = 100; // Track price at last transaction
+    this.sharedDataFile = CONFIG.SHARED_DATA_FILE;
+  }
+
+  async initialize() {
+    await this.loadSharedData();
+    await this.loadTransactionHistory();
+    this.calculateMetrics();
+  }
+
+  // Load shared data from single file
+  async loadSharedData() {
+    try {
+      if (fs.existsSync(this.sharedDataFile)) {
+        const data = JSON.parse(fs.readFileSync(this.sharedDataFile, 'utf8'));
+        this.priceHistory = data.priceHistory || [];
+        this.operationHistory = data.operationHistory || [];
+        this.lastPrice = data.lastPrice || 100;
+        this.lastTransactionPrice = data.lastTransactionPrice || 100;
+        console.log(chalk.green(`✓ Loaded ${this.priceHistory.length} price points and ${this.operationHistory.length} operations from shared storage`));
+      }
+    } catch (error) {
+      console.log(chalk.yellow("No existing shared data found or error loading, starting fresh..."));
+    }
+  }
+
+  // Save data to shared file for both systems
+  async persistSharedData() {
+    try {
+      const data = {
+        priceHistory: this.priceHistory,
+        operationHistory: this.operationHistory,
+        lastPrice: this.lastPrice,
+        lastTransactionPrice: this.lastTransactionPrice,
+        timestamp: new Date().toISOString(),
+        system: "PHX Central Bank"
+      };
+      fs.writeFileSync(this.sharedDataFile, JSON.stringify(data, null, 2));
+    } catch (error) {
+      console.error("Error persisting shared data:", error);
+    }
+  }
+
+  async loadTransactionHistory() {
+    try {
+      const filter = this.phx.filters.Transfer();
+      const events = await this.phx.queryFilter(filter, 0, "latest");
+      
+      this.transactionHistory = events.map(event => ({
+        value: event.args.value || event.args[2],
+        blockNumber: event.blockNumber,
+        timestamp: Date.now()
+      }));
+
+      this.totalTransactions = this.transactionHistory.length;
+    } catch (error) {
+      console.error("Error loading transaction history:", error);
+    }
+  }
+
+  calculateMetrics() {
+    this.volume24h = this.transactionHistory
+      .slice(-100)
+      .reduce((sum, tx) => sum + parseFloat(ethers.formatUnits(tx.value, 18)), 0);
+
+    this.totalVolume = this.transactionHistory
+      .reduce((sum, tx) => sum + parseFloat(ethers.formatUnits(tx.value, 18)), 0);
+  }
+
+  // Track central bank operations and their market impact
+  recordCentralBankOperation(type, amountPHX, description) {
+    const operation = {
+      timestamp: new Date().toLocaleString(),
+      type,
+      amountPHX,
+      description,
+      priceBefore: this.lastPrice,
+      marketConditions: this.getMarketDataSync()
+    };
+    
+    this.operationHistory.unshift(operation);
+    
+    if (this.operationHistory.length > 50) {
+      this.operationHistory.pop();
+    }
+    
+    // Persist after recording operation to shared file
+    this.persistSharedData().catch(console.error);
+    
+    return operation;
+  }
+
+  // Calculate operation impact on price
+  calculateOperationImpact(operationType, amountPHX) {
+    const basePrice = this.basePriceUSD;
+    let impact = 0;
+    
+    switch(operationType) {
+      case 'QE':
+        impact = (amountPHX / 10000) * 0.1;
+        break;
+      case 'QT':
+        impact = -(amountPHX / 10000) * 0.15;
+        break;
+      case 'INFLATION':
+        impact = -(amountPHX / 50000) * 0.2;
+        break;
+      case 'EMERGENCY_MINT':
+        impact = -(amountPHX / 25000) * 0.3;
+        break;
+      case 'TREASURY_TRANSFER':
+        impact = (amountPHX / 20000) * 0.05;
+        break;
+    }
+    
+    return impact;
+  }
+
+  async calculateConcentrationRisk() {
+    try {
+      if (!this.availableAccounts || this.availableAccounts.length === 0) return 0;
+
+      const balances = [];
+      const userAccounts = this.availableAccounts.slice(1);
+      
+      for (const account of userAccounts) {
+        const balance = await this.phx.balanceOf(account.address);
+        balances.push(parseFloat(ethers.formatUnits(balance, 18)));
+      }
+
+      if (balances.length === 0) return 0;
+
+      const sortedBalances = balances.sort((a, b) => a - b);
+      const total = sortedBalances.reduce((sum, val) => sum + val, 0);
+      if (total === 0) return 0;
+
+      let giniSum = 0;
+      const n = sortedBalances.length;
+      
+      for (let i = 0; i < n; i++) {
+        for (let j = 0; j < n; j++) {
+          giniSum += Math.abs(sortedBalances[i] - sortedBalances[j]);
+        }
+      }
+      
+      const gini = giniSum / (2 * n * n * (total / n));
+      return Math.min(gini, 1);
+    } catch (error) {
+      return 0;
+    }
+  }
+
+  calculateVelocityRisk() {
+    if (this.totalTransactions === 0) return 0;
+    try {
+      const totalSupply = 10000000;
+      const velocity = this.totalVolume / totalSupply;
+      return Math.min(velocity * 0.1, 0.5);
+    } catch (error) {
+      return 0;
+    }
+  }
+
+  detectLargeTransfers() {
+    if (this.transactionHistory.length === 0) return 0;
+    
+    const largeTransferThreshold = 1000;
+    let largeTransferCount = 0;
+    
+    for (const tx of this.transactionHistory.slice(-50)) {
+      const amount = parseFloat(ethers.formatUnits(tx.value, 18));
+      if (amount > largeTransferThreshold) largeTransferCount++;
+    }
+    
+    return Math.min(largeTransferCount / 50, 0.3);
+  }
+
+  calculatePriceMomentum() {
+    if (this.priceHistory.length < 2) return 0;
+    
+    const recentPrices = this.priceHistory.slice(-5);
+    let declines = 0;
+    
+    for (let i = 1; i < recentPrices.length; i++) {
+      if (recentPrices[i].price < recentPrices[i - 1].price) declines++;
+    }
+    
+    return declines / recentPrices.length >= 0.6 ? -0.1 : 0;
+  }
+
+  async calculateCurrentPrice() {
+    const basePrice = this.basePriceUSD;
+        
+    // Positive factors
+    const volumeFactor = Math.log10(this.volume24h + 1) * 2;
+    const transactionFactor = Math.log10(this.totalTransactions + 1) * 1.5;
+    const networkHealth = Math.min(this.totalVolume / 10000, 2);
+    
+    // Crash risk factors
+    const concentrationRisk = await this.calculateConcentrationRisk();
+    const velocityRisk = this.calculateVelocityRisk();
+    const largeTransferRisk = this.detectLargeTransfers();
+    const priceMomentum = this.calculatePriceMomentum();
+    
+    let calculatedPrice = basePrice;
+    
+    // Apply positive factors
+    calculatedPrice *= (1 + (volumeFactor * 0.01));
+    calculatedPrice *= (1 + (transactionFactor * 0.005));
+    calculatedPrice *= (1 + (networkHealth * 0.01));
+    
+    // Apply crash risks
+    calculatedPrice *= (1 - (concentrationRisk * 0.1));
+    calculatedPrice *= (1 - (velocityRisk * 0.05));
+    calculatedPrice *= (1 - (largeTransferRisk * 0.15));
+    calculatedPrice *= (1 + priceMomentum);
+
+    // Market noise - increased for more volatility
+    const marketNoise = (Math.random() - 0.5) * 0.08;
+    calculatedPrice *= (1 + marketNoise);
+
+    // Ensure minimum price (can crash up to 70%)
+    calculatedPrice = Math.max(calculatedPrice, basePrice * 0.3);
+
+    // Reduce the impact of historical data when no recent activity
+    const timeDecayFactor = this.transactionHistory.length > 0 ? 1 : 0.1; // Reduce historical impact by 90% when no transactions
+    
+    // Store price for momentum calculation and logging
+    const priceData = {
+      price: parseFloat(calculatedPrice.toFixed(2)),
+      timestamp: new Date().toLocaleString(),
+      volume24h: this.volume24h,
+      totalTransactions: this.totalTransactions,
+      marketConditions: {
+        concentrationRisk: (concentrationRisk * 100).toFixed(1),
+        velocityRisk: (velocityRisk * 100).toFixed(1),
+        largeTransferRisk: (largeTransferRisk * 100).toFixed(1)
+      },
+      // Track price movement from last transaction
+      priceChangeFromLastTx: this.lastTransactionPrice ? 
+        ((calculatedPrice - this.lastTransactionPrice) / this.lastTransactionPrice * 100).toFixed(2) : "0.00"
+    };
+    
+    this.priceHistory.push(priceData);
+    if (this.priceHistory.length > 100) {
+      this.priceHistory.shift();
+    }
+    
+    this.lastPrice = priceData.price;
+    
+    // Persist after price update to shared file
+    this.persistSharedData().catch(console.error);
+    
+    return priceData.price;
+  }
+
+  // Update price after transaction - track if price declined
+  async updatePriceAfterTransaction() {
+    const previousPrice = this.lastPrice;
+    await this.initialize(); // Reload metrics
+    const newPrice = await this.calculateCurrentPrice();
+    
+    // Store the price at time of transaction for future comparison
+    this.lastTransactionPrice = newPrice;
+    
+    // Persist after transaction to shared file
+    await this.persistSharedData();
+    
+    return {
+      newPrice,
+      previousPrice,
+      priceChange: ((newPrice - previousPrice) / previousPrice * 100).toFixed(2),
+      declined: newPrice < previousPrice
+    };
+  }
+
+  getMarketDataSync() {
+    return {
+      price: this.lastPrice,
+      volume24h: this.volume24h,
+      totalTransactions: this.totalTransactions,
+      totalVolume: this.totalVolume,
+      priceChange: ((this.lastPrice - this.basePriceUSD) / this.basePriceUSD * 100).toFixed(2),
+      concentrationRisk: "0.0",
+      velocityRisk: "0.0",
+      largeTransferRisk: "0.0",
+      crashProbability: "0.0"
+    };
+  }
+
+  async getMarketData() {
+    const currentPrice = await this.calculateCurrentPrice();
+    const concentrationRisk = await this.calculateConcentrationRisk();
+    const velocityRisk = this.calculateVelocityRisk();
+    const largeTransferRisk = this.detectLargeTransfers();
+    
+    return {
+      price: currentPrice,
+      volume24h: this.volume24h,
+      totalTransactions: this.totalTransactions,
+      totalVolume: this.totalVolume,
+      priceChange: ((currentPrice - this.basePriceUSD) / this.basePriceUSD * 100).toFixed(2),
+      concentrationRisk: (concentrationRisk * 100).toFixed(1),
+      velocityRisk: (velocityRisk * 100).toFixed(1),
+      largeTransferRisk: (largeTransferRisk * 100).toFixed(1),
+      crashProbability: Math.min((concentrationRisk + velocityRisk + largeTransferRisk) * 50, 95).toFixed(1)
+    };
+  }
+
+  async convertToUSD(phxAmount) {
+    const marketData = await this.getMarketData();
+    return parseFloat((phxAmount * marketData.price).toFixed(2));
+  }
+
+  getPriceHistory() {
+    return this.priceHistory;
+  }
+
+  getOperationHistory() {
+    return this.operationHistory;
+  }
+
+  // Get price performance metrics
+  getPricePerformance() {
+    if (this.priceHistory.length < 2) return null;
+    
+    const firstPrice = this.priceHistory[this.priceHistory.length - 1].price;
+    const currentPrice = this.lastPrice;
+    const highestPrice = Math.max(...this.priceHistory.map(p => p.price));
+    const lowestPrice = Math.min(...this.priceHistory.map(p => p.price));
+    
+    return {
+      startPrice: firstPrice,
+      currentPrice: currentPrice,
+      highestPrice: highestPrice,
+      lowestPrice: lowestPrice,
+      totalChange: ((currentPrice - firstPrice) / firstPrice * 100).toFixed(2),
+      fromATH: ((currentPrice - highestPrice) / highestPrice * 100).toFixed(2),
+      volatility: this.calculateVolatility()
+    };
+  }
+
+  calculateVolatility() {
+    if (this.priceHistory.length < 2) return 0;
+    
+    const prices = this.priceHistory.map(p => p.price);
+    const returns = [];
+    
+    for (let i = 1; i < prices.length; i++) {
+      returns.push((prices[i] - prices[i-1]) / prices[i-1]);
+    }
+    
+    const avgReturn = returns.reduce((sum, ret) => sum + ret, 0) / returns.length;
+    const variance = returns.reduce((sum, ret) => sum + Math.pow(ret - avgReturn, 2), 0) / returns.length;
+    
+    return (Math.sqrt(variance) * 100).toFixed(2);
+  }
+}
+
+class PHXCentralBank {
+  constructor() {
+    this.phx = null;
+    this.cb = null;
+    this.owner = null;
+    this.availableAccounts = [];
+    this.transactionLedger = [];
+    this.priceOracle = null;
+    this.rl = readline.createInterface({ 
+      input: process.stdin, 
+      output: process.stdout 
+    });
+
+    this.theme = {
+      title: chalk.blueBright,
+      section: chalk.cyanBright,
+      label: chalk.yellow,
+      value: chalk.white,
+      ok: chalk.greenBright,
+      warn: chalk.yellowBright,
+      err: chalk.redBright,
+      dim: chalk.gray,
+      highlight: chalk.bgBlue.white
+    };
+
+    this.currentPage = 0;
+    this.pageSize = 10;
+  }
+
+  // ---------- UI Helpers ----------
+  fancyTitle(text) {
+    try {
+      const fig = figlet.textSync(text, { font: "Small", horizontalLayout: "fitted" });
+      console.log(this.theme.title(fig));
+    } catch {
+      console.log(this.theme.title(`\n${text}\n`));
+    }
+  }
+
+  section(title) {
+    const border = "─".repeat(58);
+    console.log("\n" + this.theme.title("┌" + border + "┐"));
+    console.log(this.theme.title("│") + " " + this.theme.section.bold(title.padEnd(56)) + this.theme.title("│"));
+    console.log(this.theme.title("└" + border + "┘") + "\n");
+  }
+
+  smallNote(msg) { console.log(this.theme.dim(`${msg}`)); }
+  error(msg) { console.log(this.theme.err(` ${msg}`)); }
+  success(msg) { console.log(this.theme.ok(` ${msg}`)); }
+  clearScreen() { console.clear(); }
+  
+  question(prompt) { 
+    return new Promise(resolve => this.rl.question(this.theme.label(prompt), resolve)); 
+  }
+
+  async getAddressFromUser(prompt) {
+    while (true) {
+      const input = (await this.question(prompt)).trim();
+      if (!isNaN(input) && input !== "") {
+        const idx = parseInt(input);
+        if (idx >= 0 && idx < this.availableAccounts.length) {
+          return this.availableAccounts[idx].address;
+        }
+      }
+      if (ethers.isAddress(input)) {
+        return input;
+      }
+      this.error(`Invalid address/index. Valid index: 0-${this.availableAccounts.length - 1}.`);
+    }
+  }
+
+  async getAmountFromUser(prompt) {
+    while (true) {
+      const input = (await this.question(prompt)).trim();
+      if (!isNaN(input) && parseFloat(input) > 0) {
+        return input;
+      }
+      this.error("Invalid amount. Enter a positive number.");
+    }
+  }
+
+  // ---------- Initialization ----------
+  async initialize() {
+    this.clearScreen();
+    this.fancyTitle("PHX CENTRAL BANK");
+    console.log(this.theme.dim("=".repeat(64)));
+    console.log(this.theme.value("Starting PHX Central Bank Console..."));
+    console.log(this.theme.warn(" Treasury operations are restricted to authorized accounts only"));
+    console.log(this.theme.dim("=".repeat(64) + "\n"));
+
+    const spinner = ora("Connecting to local node and loading accounts...").start();
+    try {
+      this.availableAccounts = await ethers.getSigners();
+      this.owner = this.availableAccounts[0];
+
+      const PHX = await ethers.getContractFactory("PhonexCoin");
+      this.phx = await PHX.attach(CONFIG.PHX_TOKEN_ADDRESS);
+
+      const CentralBank = await ethers.getContractFactory("PhonexCentralBank");
+      this.cb = await CentralBank.attach(CONFIG.CENTRAL_BANK_ADDRESS);
+
+      // Initialize Price Oracle with shared persistence
+      spinner.text = "Initializing market price oracle with shared data persistence...";
+      this.priceOracle = new PHXPriceOracle(this.phx, this.availableAccounts);
+      await this.priceOracle.initialize();
+
+      spinner.succeed("Accounts loaded & contracts attached successfully");
+
+      const treasuryBal = await this.phx.balanceOf(this.owner.address);
+      const marketData = await this.priceOracle.getMarketData();
+      
+      console.log(this.theme.label(" Treasury Balance: ") + this.theme.ok(ethers.formatUnits(treasuryBal, 18) + " PHX"));
+      console.log(this.theme.label(" Current PHX Price: ") + this.theme.ok(`$${marketData.price} USD`));
+      console.log(this.theme.label("PHX Token: ") + this.theme.value(CONFIG.PHX_TOKEN_ADDRESS));
+      console.log(this.theme.label("Central Bank: ") + this.theme.value(CONFIG.CENTRAL_BANK_ADDRESS));
+      console.log(this.theme.label("Data File: ") + this.theme.value(CONFIG.SHARED_DATA_FILE));
+
+      // Show market risk if high
+      if (parseFloat(marketData.crashProbability) > 40) {
+        console.log(this.theme.err(` Market Risk: ${marketData.crashProbability}% crash probability`));
+      }
+
+      // Load REAL blockchain transaction history
+      await this.loadBlockchainTransactionHistory();
+
+      // Load persisted transaction data if available
+      await this.loadPersistedTransactionData();
+
+      return true;
+    } catch (error) {
+      spinner.fail("Initialization failed");
+      this.error(error?.message || String(error));
+      return false;
+    }
+  }
+
+  // ---------- Display Available Wallets ----------
+  async showAvailableWallets() {
+    this.section("AVAILABLE WALLETS & BALANCES");
+    
+    try {
+      const marketData = await this.priceOracle.getMarketData();
+      const table = new Table({
+        head: ['Index', 'Address', 'Balance (PHX)', 'Balance (USD)', 'Type'].map(h => this.theme.highlight(h)),
+        colWidths: [8, 42, 20, 20, 15],
+        wordWrap: true
+      });
+
+      for (let i = 0; i < this.availableAccounts.length; i++) {
+        const account = this.availableAccounts[i];
+        const balance = await this.phx.balanceOf(account.address);
+        const balancePHX = parseFloat(ethers.formatUnits(balance, 18));
+        const balanceUSD = await this.priceOracle.convertToUSD(balancePHX);
+        
+        const shortAddress = account.address.slice(0, 8) + '...' + account.address.slice(-6);
+        const type = i === 0 ? 'Treasury' : 'User';
+        const typeColor = i === 0 ? chalk.green : chalk.blue;
+        
+        table.push([
+          chalk.cyan(i),
+          chalk.blue(shortAddress),
+          chalk.bold(balancePHX.toFixed(2)),
+          chalk.green(`$${balanceUSD.toFixed(2)}`),
+          typeColor(type)
+        ]);
+      }
+
+      console.log(table.toString());
+      
+      // Show summary
+      const totalPHX = await this.phx.totalSupply();
+      const treasuryBalance = await this.phx.balanceOf(this.owner.address);
+      const treasuryUSD = await this.priceOracle.convertToUSD(parseFloat(ethers.formatUnits(treasuryBalance, 18)));
+      
+      console.log(this.theme.section("\nWallet Summary:"));
+      console.log("  Total Wallets:", this.theme.value(this.availableAccounts.length));
+      console.log("  Treasury Balance:", this.theme.ok(ethers.formatUnits(treasuryBalance, 18) + " PHX"));
+      console.log("  Treasury Value:", this.theme.ok(`$${treasuryUSD.toFixed(2)} USD`));
+      console.log("  Total Supply:", this.theme.value(ethers.formatUnits(totalPHX, 18) + " PHX"));
+      
+    } catch (error) {
+      this.error("Failed to load wallet data: " + error.message);
+    }
+  }
+
+  // ---------- REAL BLOCKCHAIN TRANSACTION HISTORY ----------
+  async loadBlockchainTransactionHistory() {
+    const spinner = ora("Loading blockchain transaction history...").start();
+    try {
+      this.transactionLedger = [];
+      
+      const transferFilter = this.phx.filters.Transfer();
+      const transferEvents = await this.phx.queryFilter(transferFilter, 0, 'latest');
+      
+      for (const event of transferEvents) {
+        const block = await event.getBlock();
+        const timestamp = new Date(block.timestamp * 1000).toLocaleString();
+        
+        let type = "Transfer";
+        
+        // Check for mint events (from zero address)
+        if (event.args.from === ethers.ZeroAddress) {
+          // This is a mint operation - try to determine if it's emergency mint or inflation
+          const tx = await ethers.provider.getTransaction(event.transactionHash);
+          
+          // Check if it's an emergency mint by examining the function signature
+          if (tx.data.includes('a6f2ae3a') || // emergencyMint function signature
+              tx.data.includes('emergencyMint') || 
+              (await this.isEmergencyMintTransaction(tx))) {
+            type = "Emergency Mint";
+          } else {
+            type = "Inflation Mint";
+          }
+        }
+        else if (event.args.from === this.owner.address) {
+          type = "Treasury Transfer";
+        } else if (event.args.to === await this.cb.getAddress()) {
+          type = "QT Absorption";
+        } else if (event.args.from === await this.cb.getAddress()) {
+          type = "QE Injection";
+        }
+
+        this.transactionLedger.push({
+          timestamp,
+          type,
+          from: event.args.from,
+          target: event.args.to,
+          amount: ethers.formatUnits(event.args.value, 18),
+          fee: "0",
+          net: ethers.formatUnits(event.args.value, 18),
+          txHash: event.transactionHash,
+          status: 'Confirmed',
+          blockNumber: event.blockNumber
+        });
+      }
+
+      // Sort by block number (chronological order)
+      this.transactionLedger.sort((a, b) => b.blockNumber - a.blockNumber);
+
+      spinner.succeed(`Loaded ${this.transactionLedger.length} historical transactions from blockchain`);
+      
+    } catch (error) {
+      spinner.fail("Failed to load blockchain history");
+      this.error("Blockchain history loading: " + error.message);
+    }
+  }
+
+  // Helper method to detect emergency mint transactions
+  async isEmergencyMintTransaction(tx) {
+    try {
+      // Try to decode the transaction to see if it's calling emergencyMint
+      const iface = new ethers.Interface([
+        "function emergencyMint(uint256 amount)"
+      ]);
+      
+      const decoded = iface.parseTransaction({ data: tx.data, value: tx.value });
+      return decoded && decoded.name === "emergencyMint";
+    } catch (error) {
+      // If decoding fails, check for patterns that indicate emergency mint
+      return tx.data.length > 10 && // Has calldata
+             !tx.data.includes('mintAnnualInflation') && 
+             !tx.data.includes('mintInflation');
+    }
+  }
+
+  // ---------- Add New Transaction to Ledger ----------
+  async addBlockchainTransaction(txHash, type, target, amount) {
+    try {
+      const receipt = await ethers.provider.getTransactionReceipt(txHash);
+      const block = await ethers.provider.getBlock(receipt.blockNumber);
+      const timestamp = new Date(block.timestamp * 1000).toLocaleString();
+
+      // Check if this transaction already exists in the ledger
+      const existingIndex = this.transactionLedger.findIndex(tx => tx.txHash === txHash);
+      
+      if (existingIndex !== -1) {
+        // Update existing transaction with correct type
+        this.transactionLedger[existingIndex].type = type;
+      } else {
+        // Add new transaction
+        this.transactionLedger.unshift({
+          timestamp,
+          type,
+          from: this.owner.address,
+          target,
+          amount,
+          fee: "0",
+          net: amount,
+          txHash,
+          status: 'Confirmed',
+          blockNumber: receipt.blockNumber
+        });
+      }
+
+      // Keep ledger sorted by block number
+      this.transactionLedger.sort((a, b) => b.blockNumber - a.blockNumber);
+      
+      // Persist the updated transaction ledger to shared data
+      await this.persistTransactionData();
+      
+    } catch (error) {
+      // Fallback: add with current time if blockchain data unavailable
+      const timestamp = new Date().toLocaleString();
+      this.transactionLedger.unshift({
+        timestamp,
+        type,
+        from: this.owner.address,
+        target,
+        amount,
+        fee: "0",
+        net: amount,
+        txHash,
+        status: 'Pending',
+        blockNumber: 0
+      });
+      
+      await this.persistTransactionData();
+    }
+  }
+
+  // New method to persist transaction data separately
+  async persistTransactionData() {
+    try {
+      const transactionData = {
+        transactions: this.transactionLedger,
+        lastUpdated: new Date().toISOString()
+      };
+      
+      // You might want to save this to a separate file or enhance the existing shared data
+      const sharedData = fs.existsSync(CONFIG.SHARED_DATA_FILE) ? 
+        JSON.parse(fs.readFileSync(CONFIG.SHARED_DATA_FILE, 'utf8')) : {};
+      
+      sharedData.transactions = this.transactionLedger;
+      sharedData.transactionsLastUpdated = new Date().toISOString();
+      
+      fs.writeFileSync(CONFIG.SHARED_DATA_FILE, JSON.stringify(sharedData, null, 2));
+    } catch (error) {
+      console.error("Error persisting transaction data:", error);
+    }
+  }
+
+  async loadPersistedTransactionData() {
+    try {
+      if (fs.existsSync(CONFIG.SHARED_DATA_FILE)) {
+        const data = JSON.parse(fs.readFileSync(CONFIG.SHARED_DATA_FILE, 'utf8'));
+        if (data.transactions && Array.isArray(data.transactions)) {
+          // Merge persisted transactions with blockchain transactions
+          for (const persistedTx of data.transactions) {
+            const exists = this.transactionLedger.some(tx => tx.txHash === persistedTx.txHash);
+            if (!exists) {
+              this.transactionLedger.push(persistedTx);
+            } else {
+              // Update type if we have more specific information
+              const existingTx = this.transactionLedger.find(tx => tx.txHash === persistedTx.txHash);
+              if (persistedTx.type !== "Transfer" && existingTx.type === "Transfer") {
+                existingTx.type = persistedTx.type;
+              }
+            }
+          }
+          
+          // Re-sort after merge
+          this.transactionLedger.sort((a, b) => b.blockNumber - a.blockNumber);
+          
+          console.log(chalk.green(`✓ Loaded ${data.transactions.length} persisted transactions`));
+        }
+      }
+    } catch (error) {
+      console.log(chalk.yellow("No persisted transaction data found or error loading"));
+    }
+  }
+
+  // ---------- Ledger Management ----------
+  getTotalPages() { 
+    return Math.ceil(this.transactionLedger.length / this.pageSize) || 1; 
+  }
+
+  getCurrentPageTransactions() {
+    const start = this.currentPage * this.pageSize;
+    const end = start + this.pageSize;
+    return this.transactionLedger.slice(start, end);
+  }
+
+  displayTransactionTable(transactions) {
+    if (transactions.length === 0) { 
+      this.smallNote("No transactions found on blockchain."); 
+      return; 
+    }
+
+    const table = new Table({
+      head: ['Time', 'Type', 'From', 'To', 'Amount (PHX)', 'Block', 'Status'].map(h => this.theme.highlight(h)),
+      colWidths: [20, 18, 24, 24, 15, 8, 12],
+      wordWrap: true
+    });
+
+    transactions.forEach(tx => {
+      const typeColor = { 
+        'Treasury Transfer': chalk.cyan, 
+        'QE Operation': chalk.green, 
+        'QT Operation': chalk.yellow, 
+        'Transfer': chalk.blue,
+        'QE Injection': chalk.green,
+        'QT Absorption': chalk.yellow,
+        'Inflation Mint': chalk.magenta, 
+        'Emergency Mint': chalk.red
+      }[tx.type] || chalk.white;
+
+      const statusColor = tx.status === 'Confirmed' ? chalk.green : 
+                         tx.status === 'Pending' ? chalk.yellow : chalk.red;
+
+      const shortFrom = tx.from.length > 20 ? 
+        tx.from.slice(0, 8) + '...' + tx.from.slice(-6) : tx.from;
+      const shortTo = tx.target.length > 20 ? 
+        tx.target.slice(0, 8) + '...' + tx.target.slice(-6) : tx.target;
+
+      table.push([
+        chalk.gray(tx.timestamp),
+        typeColor(tx.type),
+        chalk.blue(shortFrom),
+        chalk.cyan(shortTo),
+        chalk.bold(tx.amount),
+        chalk.dim(tx.blockNumber || 'Pending'),
+        statusColor(tx.status)
+      ]);
+    });
+
+    console.log(table.toString());
+  }
+
+  async showInteractiveLedger() {
+    if (this.transactionLedger.length === 0) {
+      this.section("BLOCKCHAIN TRANSACTION HISTORY");
+      this.smallNote("No transactions found on the blockchain.");
+      await this.question(this.theme.dim("\nPress Enter to return to menu..."));
+      return;
+    }
+
+    this.section("BLOCKCHAIN TRANSACTION HISTORY - REAL DATA");
+
+    const totalPages = this.getTotalPages();
+    const pageTransactions = this.getCurrentPageTransactions();
+    
+    this.displayTransactionTable(pageTransactions);
+    
+    console.log(this.theme.dim("\n" + "─".repeat(100)));
+    console.log(this.theme.warn("Navigation: [N] Next page • [P] Previous page • [R] Refresh • [Q] Return to menu"));
+    console.log(this.theme.dim(`Page ${this.currentPage + 1} of ${totalPages} • ${this.transactionLedger.length} blockchain transactions`));
+    console.log(this.theme.dim("All transactions are read directly from the blockchain"));
+
+    const choice = await this.question("\nEnter command (N/P/R/Q): ");
+    switch (choice.trim().toLowerCase()) {
+      case 'n':
+        if (this.currentPage < totalPages - 1) {
+          this.currentPage++;
+        }
+        await this.showInteractiveLedger();
+        break;
+      case 'p':
+        if (this.currentPage > 0) {
+          this.currentPage--;
+        }
+        await this.showInteractiveLedger();
+        break;
+      case 'r':
+        await this.loadBlockchainTransactionHistory();
+        this.currentPage = 0;
+        await this.showInteractiveLedger();
+        break;
+      case 'q':
+        return;
+      default:
+        await this.showInteractiveLedger();
+        break;
+    }
+  }
+
+  // ---------- Market Analytics & Price History ----------
+  async showMarketAnalytics() {
+    this.section("MARKET ANALYTICS & PRICE HISTORY");
+    
+    try {
+      const marketData = await this.priceOracle.getMarketData();
+      const pricePerformance = this.priceOracle.getPricePerformance();
+      const priceHistory = this.priceOracle.getPriceHistory();
+
+      console.log(this.theme.section("Current Market Conditions:"));
+      console.log("  PHX Price:", this.theme.ok(`$${marketData.price} USD`));
+      console.log("  Base Peg:", this.theme.value("1 PHX = $100 USD"));
+      console.log("  24h Price Change:", 
+        marketData.priceChange >= 0 ? this.theme.ok(`+${marketData.priceChange}%`) : this.theme.err(`${marketData.priceChange}%`));
+      console.log("  24h Volume:", this.theme.value(`${marketData.volume24h.toFixed(2)} PHX`));
+
+      console.log(this.theme.section("\nMarket Risk Assessment:"));
+      console.log("  Concentration Risk:", 
+        marketData.concentrationRisk > 50 ? this.theme.err(`${marketData.concentrationRisk}%`) : this.theme.value(`${marketData.concentrationRisk}%`));
+      console.log("  Velocity Risk:", 
+        marketData.velocityRisk > 30 ? this.theme.err(`${marketData.velocityRisk}%`) : this.theme.value(`${marketData.velocityRisk}%`));
+      console.log("  Large Transfer Risk:", 
+        marketData.largeTransferRisk > 20 ? this.theme.err(`${marketData.largeTransferRisk}%`) : this.theme.value(`${marketData.largeTransferRisk}%`));
+      console.log("  Crash Probability:", 
+        marketData.crashProbability > 40 ? this.theme.err(`${marketData.crashProbability}%`) : this.theme.warn(`${marketData.crashProbability}%`));
+
+      if (pricePerformance) {
+        console.log(this.theme.section("\nPrice Performance:"));
+        console.log("  Start Price:", this.theme.value(`$${pricePerformance.startPrice} USD`));
+        console.log("  All-Time High:", this.theme.ok(`$${pricePerformance.highestPrice} USD`));
+        console.log("  All-Time Low:", this.theme.err(`$${pricePerformance.lowestPrice} USD`));
+        console.log("  Total Return:", 
+          parseFloat(pricePerformance.totalChange) >= 0 ? this.theme.ok(`${pricePerformance.totalChange}%`) : this.theme.err(`${pricePerformance.totalChange}%`));
+        console.log("  From ATH:", 
+          parseFloat(pricePerformance.fromATH) >= 0 ? this.theme.ok(`${pricePerformance.fromATH}%`) : this.theme.err(`${pricePerformance.fromATH}%`));
+        console.log("  Volatility:", this.theme.value(`${pricePerformance.volatility}%`));
+      }
+
+      // Show recent price history with decline indicators
+      if (priceHistory.length > 0) {
+        console.log(this.theme.section("\nRecent Price History:"));
+        const recentPrices = priceHistory.slice(-5).reverse();
+        recentPrices.forEach((price, index) => {
+          if (index > 0) {
+            const prevPrice = recentPrices[index - 1].price;
+            const change = ((price.price - prevPrice) / prevPrice * 100).toFixed(2);
+            const changeColor = change >= 0 ? this.theme.ok : this.theme.err;
+            const changeSymbol = change >= 0 ? '+' : '';
+            console.log(`  ${price.timestamp}: $${price.price} USD ${changeColor(`(${changeSymbol}${change}%)`)}`);
+          } else {
+            console.log(`  ${price.timestamp}: $${price.price} USD`);
+          }
+        });
+      }
+
+      console.log(this.theme.dim("\nMarket factors: Transaction volume, network health, token distribution"));
+      console.log(this.theme.dim("Risk factors: Wealth concentration, transaction velocity, whale movements"));
+
+    } catch (error) {
+      this.error("Market analytics error: " + error.message);
+    }
+  }
+
+  async showPriceHistory() {
+    this.section("PHX/USD PRICE HISTORY LOG");
+    
+    const priceHistory = this.priceOracle.getPriceHistory();
+    if (priceHistory.length === 0) {
+      this.smallNote("No price history available yet.");
+      return;
+    }
+
+    const table = new Table({
+      head: ['Timestamp', 'PHX Price (USD)', '24h Volume', 'Transactions', 'Price Movement'].map(h => this.theme.highlight(h)),
+      colWidths: [20, 15, 15, 15, 20],
+      wordWrap: true
+    });
+
+    // Show most recent 15 prices
+    const displayPrices = priceHistory.slice(-15).reverse();
+    
+    displayPrices.forEach((price, index) => {
+      let movement = "N/A";
+      let movementColor = chalk.gray;
+      
+      if (index < displayPrices.length - 1) {
+        const prevPrice = displayPrices[index + 1].price;
+        const change = ((price.price - prevPrice) / prevPrice * 100).toFixed(2);
+        movement = change >= 0 ? `+${change}%` : `${change}%`;
+        movementColor = change >= 0 ? chalk.green : chalk.red;
+      }
+
+      table.push([
+        chalk.gray(price.timestamp),
+        chalk.bold(`$${price.price}`),
+        chalk.cyan(`${price.volume24h.toFixed(0)} PHX`),
+        chalk.blue(price.totalTransactions),
+        movementColor(movement)
+      ]);
+    });
+
+    console.log(table.toString());
+    
+    const performance = this.priceOracle.getPricePerformance();
+    if (performance) {
+      console.log(this.theme.section("\nPrice Performance Summary:"));
+      console.log("  Period:", this.theme.value(`${priceHistory.length} price recordings`));
+      console.log("  Total Change:", 
+        parseFloat(performance.totalChange) >= 0 ? this.theme.ok(`${performance.totalChange}%`) : this.theme.err(`${performance.totalChange}%`));
+      console.log("  Volatility:", this.theme.value(`${performance.volatility}%`));
+      
+      // Show if current price is below last transaction price
+      const currentPrice = this.priceOracle.lastPrice;
+      const lastTxPrice = this.priceOracle.lastTransactionPrice;
+      if (lastTxPrice && currentPrice < lastTxPrice) {
+        const decline = ((currentPrice - lastTxPrice) / lastTxPrice * 100).toFixed(2);
+        console.log("  Price Decline Since Last Tx:", this.theme.err(`${decline}%`));
+      }
+    }
+  }
+
+  async showOperationImpactAnalysis() {
+    this.section("CENTRAL BANK OPERATION IMPACT ANALYSIS");
+    
+    const operations = this.priceOracle.getOperationHistory();
+    if (operations.length === 0) {
+      this.smallNote("No central bank operations recorded yet.");
+      return;
+    }
+
+    const table = new Table({
+      head: ['Time', 'Operation', 'Amount', 'Price Before', 'Market Impact'].map(h => this.theme.highlight(h)),
+      colWidths: [20, 20, 15, 15, 20],
+      wordWrap: true
+    });
+
+    operations.slice(0, 10).forEach(op => {
+      const impact = this.priceOracle.calculateOperationImpact(op.type, op.amountPHX);
+      const impactColor = impact >= 0 ? chalk.green : chalk.red;
+      const impactText = impact >= 0 ? `+${(impact * 100).toFixed(2)}%` : `${(impact * 100).toFixed(2)}%`;
+
+      table.push([
+        chalk.gray(op.timestamp),
+        this.getOperationColor(op.type)(op.type),
+        chalk.bold(`${op.amountPHX} PHX`),
+        chalk.cyan(`$${op.priceBefore}`),
+        impactColor(impactText)
+      ]);
+    });
+
+    console.log(table.toString());
+
+    // Show operation statistics
+    const qeOps = operations.filter(op => op.type === 'QE').length;
+    const qtOps = operations.filter(op => op.type === 'QT').length;
+    const totalInjected = operations.filter(op => op.type === 'QE')
+      .reduce((sum, op) => sum + op.amountPHX, 0);
+    const totalAbsorbed = operations.filter(op => op.type === 'QT')
+      .reduce((sum, op) => sum + op.amountPHX, 0);
+
+    console.log(this.theme.section("\nOperation Statistics:"));
+    console.log("  QE Operations:", this.theme.ok(qeOps));
+    console.log("  QT Operations:", this.theme.err(qtOps));
+    console.log("  Total Injected:", this.theme.ok(`${totalInjected.toFixed(0)} PHX`));
+    console.log("  Total Absorbed:", this.theme.err(`${totalAbsorbed.toFixed(0)} PHX`));
+    console.log("  Net Liquidity:", this.theme.value(`${(totalInjected - totalAbsorbed).toFixed(0)} PHX`));
+  }
+
+  getOperationColor(type) {
+    const colors = {
+      'QE': chalk.green,
+      'QT': chalk.yellow,
+      'INFLATION': chalk.magenta,
+      'EMERGENCY_MINT': chalk.red,
+      'TREASURY_TRANSFER': chalk.cyan
+    };
+    return colors[type] || chalk.white;
+  }
+
+  // ---------- Enhanced Operations with Price Impact Recording ----------
+  async treasuryToWallet() {
+    this.section("TREASURY TO WALLET TRANSFER");
+    try {
+      // Display available wallets
+      await this.showAvailableWallets();
+
+      const recipient = await this.getAddressFromUser("\n Enter recipient (index 0-" + (this.availableAccounts.length - 1) + " or address): ");
+      const amountStr = await this.getAmountFromUser(" Amount to transfer (PHX): ");
+      const amountWei = ethers.parseUnits(amountStr, 18);
+      const amountNum = parseFloat(amountStr);
+
+      // Get current market data before transaction
+      const marketDataBefore = await this.priceOracle.getMarketData();
+
+      // Record operation for impact analysis
+      this.priceOracle.recordCentralBankOperation('TREASURY_TRANSFER', amountNum, 
+        `Treasury transfer to ${recipient.slice(0, 8)}...`);
+
+      const treasuryBalance = await this.phx.balanceOf(this.owner.address);
+      if (treasuryBalance < amountWei) {
+        this.error(`Insufficient treasury balance. Available: ${ethers.formatUnits(treasuryBalance, 18)} PHX`);
+        return;
+      }
+
+      console.log(this.theme.dim("\n Transfer Summary:"));
+      console.log("  From:", this.theme.value(this.owner.address));
+      console.log("  To:", this.theme.value(recipient));
+      console.log("  Amount:", this.theme.value(amountStr + " PHX"));
+      console.log("  Current Price:", this.theme.value(`$${marketDataBefore.price} USD`));
+
+      // Show estimated market impact
+      const impact = this.priceOracle.calculateOperationImpact('TREASURY_TRANSFER', amountNum);
+      if (Math.abs(impact) > 0.001) {
+        console.log("  Est. Market Impact:", 
+          impact >= 0 ? this.theme.ok(`+${(impact * 100).toFixed(3)}%`) : this.theme.err(`${(impact * 100).toFixed(3)}%`));
+      }
+
+      const confirm = (await this.question(this.theme.warn(" Confirm transfer? (y/n): "))).trim().toLowerCase();
+      if (!["y", "yes"].includes(confirm)) { 
+        this.smallNote("Transfer cancelled."); 
+        return; 
+      }
+
+      const spinner = ora("Processing transfer on blockchain...").start();
+      const tx = await this.phx.transfer(recipient, amountWei);
+      await tx.wait();
+      spinner.succeed("Transfer confirmed on blockchain!");
+
+      // Update price oracle and get price change
+      const priceUpdate = await this.priceOracle.updatePriceAfterTransaction();
+      const marketDataAfter = await this.priceOracle.getMarketData();
+
+      await this.addBlockchainTransaction(tx.hash, "Treasury Transfer", recipient, amountStr);
+
+      const newTreasuryBal = await this.phx.balanceOf(this.owner.address);
+
+      console.log(this.theme.section("\n Updated Balances:"));
+      console.log("  Treasury Balance:", this.theme.ok(ethers.formatUnits(newTreasuryBal, 18) + " PHX"));
+      console.log("  New PHX Price:", this.theme.ok(`$${marketDataAfter.price} USD`));
+      
+      // Show price movement
+      if (priceUpdate.declined) {
+        console.log("  Price Change:", this.theme.err(`-${Math.abs(parseFloat(priceUpdate.priceChange))}%`));
+        console.log(this.theme.err("  Market price declined after transaction"));
+      } else {
+        console.log("  Price Change:", this.theme.ok(`+${priceUpdate.priceChange}%`));
+      }
+      
+      console.log(this.theme.dim(`  Transaction Hash: ${tx.hash}`));
+      
+    } catch (error) { 
+      this.error("Transfer failed: " + (error?.message || String(error))); 
+    }
+  }
+
+  async quantitativeEasing() {
+    this.section("QUANTITATIVE EASING (QE)");
+    try {
+      // Display available wallets for QE
+      await this.showAvailableWallets();
+
+      const recipient = await this.getAddressFromUser(" Recipient address (index or address): ");
+      const amountStr = await this.getAmountFromUser(" Amount to inject (PHX): ");
+      const amountWei = ethers.parseUnits(amountStr, 18);
+      const amountNum = parseFloat(amountStr);
+
+      // Get current market data before transaction
+      const marketDataBefore = await this.priceOracle.getMarketData();
+
+      // Record operation for impact analysis
+      this.priceOracle.recordCentralBankOperation('QE', amountNum, 
+        `QE injection to ${recipient.slice(0, 8)}...`);
+
+      const treasuryBalance = await this.phx.balanceOf(this.owner.address);
+      if (treasuryBalance < amountWei) {
+        this.error(`Insufficient treasury balance. Available: ${ethers.formatUnits(treasuryBalance, 18)} PHX`);
+        return;
+      }
+
+      console.log(this.theme.dim("\n QE Operation Summary:"));
+      console.log("  Recipient:", this.theme.value(recipient));
+      console.log("  Amount:", this.theme.value(amountStr + " PHX"));
+      console.log("  Current Price:", this.theme.value(`$${marketDataBefore.price} USD`));
+
+      // Show estimated market impact
+      const impact = this.priceOracle.calculateOperationImpact('QE', amountNum);
+      console.log("  Est. Market Impact:", 
+        impact >= 0 ? this.theme.ok(`+${(impact * 100).toFixed(3)}%`) : this.theme.err(`${(impact * 100).toFixed(3)}%`));
+
+      const confirm = (await this.question(this.theme.warn(" Confirm QE operation? (y/n): "))).trim().toLowerCase();
+      if (!["y", "yes"].includes(confirm)) { 
+        this.smallNote("QE operation cancelled."); 
+        return; 
+      }
+
+      const spinner = ora("Executing Quantitative Easing on blockchain...").start();
+      
+      const fundTx = await this.phx.transfer(await this.cb.getAddress(), amountWei);
+      await fundTx.wait();
+      
+      const injectTx = await this.cb.inject(recipient, amountWei);
+      await injectTx.wait();
+      
+      spinner.succeed("QE operation confirmed on blockchain!");
+
+      // Update price oracle and get price change
+      const priceUpdate = await this.priceOracle.updatePriceAfterTransaction();
+      const marketDataAfter = await this.priceOracle.getMarketData();
+
+      await this.addBlockchainTransaction(injectTx.hash, "QE Operation", recipient, amountStr);
+
+      const recipientBal = await this.phx.balanceOf(recipient);
+      const cbReserves = await this.phx.balanceOf(await this.cb.getAddress());
+
+      console.log(this.theme.section("\n Operation Results:"));
+      console.log("  Recipient Balance:", this.theme.ok(ethers.formatUnits(recipientBal, 18) + " PHX"));
+      console.log("  Central Bank Reserves:", this.theme.value(ethers.formatUnits(cbReserves, 18) + " PHX"));
+      console.log("  New PHX Price:", this.theme.ok(`$${marketDataAfter.price} USD`));
+      
+      // Show price movement
+      if (priceUpdate.declined) {
+        console.log("  Price Change:", this.theme.err(`-${Math.abs(parseFloat(priceUpdate.priceChange))}%`));
+        console.log(this.theme.err("  Market price declined after QE operation"));
+      } else {
+        console.log("  Price Change:", this.theme.ok(`+${priceUpdate.priceChange}%`));
+      }
+      
+      console.log(this.theme.dim(`  Transaction Hash: ${injectTx.hash}`));
+      
+    } catch (error) { 
+      this.error("QE operation failed: " + (error?.message || String(error))); 
+    }
+  }
+
+  async quantitativeTightening() {
+    this.section("QUANTITATIVE TIGHTENING (QT)");
+    try {
+      // Display available wallets for QT
+      await this.showAvailableWallets();
+
+      const target = await this.getAddressFromUser(" Target address for QT (index or address): ");
+      const amountStr = await this.getAmountFromUser(" Amount to absorb (PHX): ");
+      const amountWei = ethers.parseUnits(amountStr, 18);
+      const amountNum = parseFloat(amountStr);
+
+      // Get current market data before transaction
+      const marketDataBefore = await this.priceOracle.getMarketData();
+
+      // Record operation for impact analysis
+      this.priceOracle.recordCentralBankOperation('QT', amountNum, 
+        `QT absorption from ${target.slice(0, 8)}...`);
+
+      const targetBalance = await this.phx.balanceOf(target);
+      if (targetBalance < amountWei) {
+        this.error(`Insufficient target balance. Available: ${ethers.formatUnits(targetBalance, 18)} PHX`);
+        return;
+      }
+
+      const targetSigner = this.availableAccounts.find(acc => 
+        acc.address.toLowerCase() === target.toLowerCase()
+      );
+      
+      if (!targetSigner) {
+        this.error("Target address must be in available accounts for approval.");
+        return;
+      }
+
+      console.log(this.theme.dim("\n QT Operation Summary:"));
+      console.log("  Target:", this.theme.value(target));
+      console.log("  Amount:", this.theme.value(amountStr + " PHX"));
+      console.log("  Current Price:", this.theme.value(`$${marketDataBefore.price} USD`));
+
+      // Show estimated market impact
+      const impact = this.priceOracle.calculateOperationImpact('QT', amountNum);
+      console.log("  Est. Market Impact:", 
+        impact >= 0 ? this.theme.ok(`+${(impact * 100).toFixed(3)}%`) : this.theme.err(`${(impact * 100).toFixed(3)}%`));
+
+      const confirm = (await this.question(this.theme.warn(" Confirm QT operation? (y/n): "))).trim().toLowerCase();
+      if (!["y", "yes"].includes(confirm)) { 
+        this.smallNote("QT operation cancelled."); 
+        return; 
+      }
+
+      const spinner = ora("Executing Quantitative Tightening on blockchain...").start();
+      
+      const approveTx = await this.phx.connect(targetSigner).approve(await this.cb.getAddress(), amountWei);
+      await approveTx.wait();
+      
+      const absorbTx = await this.cb.absorb(target, amountWei);
+      await absorbTx.wait();
+      
+      spinner.succeed("QT operation confirmed on blockchain!");
+
+      // Update price oracle and get price change
+      const priceUpdate = await this.priceOracle.updatePriceAfterTransaction();
+      const marketDataAfter = await this.priceOracle.getMarketData();
+
+      const newTargetBal = await this.phx.balanceOf(target);
+      const cbReserves = await this.phx.balanceOf(await this.cb.getAddress());
+
+      await this.addBlockchainTransaction(absorbTx.hash, "QT Operation", target, amountStr);
+
+      console.log(this.theme.section("\n Operation Results:"));
+      console.log("  Target New Balance:", this.theme.ok(ethers.formatUnits(newTargetBal, 18) + " PHX"));
+      console.log("  Central Bank Reserves:", this.theme.value(ethers.formatUnits(cbReserves, 18) + " PHX"));
+      console.log("  New PHX Price:", this.theme.ok(`$${marketDataAfter.price} USD`));
+      
+      // Show price movement
+      if (priceUpdate.declined) {
+        console.log("  Price Change:", this.theme.err(`-${Math.abs(parseFloat(priceUpdate.priceChange))}%`));
+        console.log(this.theme.err("  Market price declined after QT operation"));
+      } else {
+        console.log("  Price Change:", this.theme.ok(`+${priceUpdate.priceChange}%`));
+      }
+      
+      console.log(this.theme.dim(`  Transaction Hash: ${absorbTx.hash}`));
+      
+    } catch (error) { 
+      this.error("QT operation failed: " + (error?.message || String(error))); 
+    }
+  }
+
+  // ---------- Inflation Status Check ----------
+  async checkInflationStatus() {
+    this.section("INFLATION STATUS CHECK");
+    
+    try {
+        // Try to get inflation status using various possible function names
+        let lastInflationTime, inflationCooldown, inflationRate, canMint;
+        
+        try {
+            // Try different possible function names
+            lastInflationTime = await this.phx.lastInflationTime ? await this.phx.lastInflationTime() : 
+                              await this.phx.getLastInflationTime ? await this.phx.getLastInflationTime() : 0;
+        } catch (e) {
+            lastInflationTime = 0;
+        }
+        
+        try {
+            inflationCooldown = await this.phx.INFLATION_COOLDOWN ? await this.phx.INFLATION_COOLDOWN() :
+                              await this.phx.inflationCooldown ? await this.phx.inflationCooldown() :
+                              await this.phx.getInflationCooldown ? await this.phx.getInflationCooldown() : 365 * 24 * 60 * 60; // Default 1 year
+        } catch (e) {
+            inflationCooldown = 365 * 24 * 60 * 60; // Default 1 year in seconds
+        }
+        
+        try {
+            inflationRate = await this.phx.INFLATION_RATE ? await this.phx.INFLATION_RATE() :
+                          await this.phx.inflationRate ? await this.phx.inflationRate() :
+                          await this.phx.getInflationRate ? await this.phx.getInflationRate() : 250; // Default 2.5% in basis points
+        } catch (e) {
+            inflationRate = 250; // Default 2.5% in basis points
+        }
+        
+        try {
+            canMint = await this.phx.canMintInflation ? await this.phx.canMintInflation() : false;
+        } catch (e) {
+            // Calculate manually based on time
+            const nextMintTime = Number(lastInflationTime) + Number(inflationCooldown);
+            const currentTime = Math.floor(Date.now() / 1000);
+            canMint = currentTime >= nextMintTime;
+        }
+        
+        const nextMintTime = Number(lastInflationTime) + Number(inflationCooldown);
+        const currentTime = Math.floor(Date.now() / 1000);
+        const timeRemaining = nextMintTime - currentTime;
+        
+        const daysRemaining = Math.ceil(timeRemaining / (24 * 60 * 60));
+        const hoursRemaining = Math.ceil(timeRemaining / (60 * 60));
+        
+        console.log(this.theme.label("Last inflation time: ") + 
+            (lastInflationTime > 0 ? 
+                this.theme.value(new Date(Number(lastInflationTime) * 1000).toLocaleString()) : 
+                this.theme.value("Never")));
+        
+        console.log(this.theme.label("Annual inflation rate: ") + 
+            this.theme.value((Number(inflationRate) / 100) + "%"));
+        
+        console.log(this.theme.label("Cooldown period: ") + 
+            this.theme.value(`${Number(inflationCooldown) / (24 * 60 * 60)} days`));
+        
+        console.log(this.theme.label("Can mint now: ") + 
+            (canMint ? this.theme.ok("YES") : this.theme.err("NO")));
+        
+        if (!canMint) {
+            console.log(this.theme.label("Time until next mint: ") + 
+                this.theme.value(`${daysRemaining} days, ${hoursRemaining % 24} hours`));
+        }
+        
+        // Calculate next inflation amount
+        if (canMint) {
+            const totalSupply = await this.phx.totalSupply();
+            const inflationAmount = (totalSupply * BigInt(inflationRate)) / 10000n;
+            console.log(this.theme.label("Next inflation amount: ") + 
+                this.theme.value(ethers.formatUnits(inflationAmount, 18) + " PHX"));
+        }
+        
+    } catch (error) {
+        this.error("Failed to check inflation status: " + error.message);
+        console.log(this.theme.dim("Note: Your contract may not have inflation functions implemented yet."));
+    }
+  }
+
+  // ---------- Enhanced Mint Annual Inflation ----------
+  async mintAnnualInflation() {
+    this.section("MINT ANNUAL INFLATION");
+    
+    try {
+        // First, check if we can mint inflation
+        let canMint = false;
+        let lastInflationTime, inflationCooldown;
+        
+        try {
+            canMint = await this.phx.canMintInflation ? await this.phx.canMintInflation() : false;
+            
+            // If canMintInflation doesn't exist, calculate manually
+            if (!canMint) {
+                lastInflationTime = await this.phx.lastInflationTime ? await this.phx.lastInflationTime() : 0;
+                inflationCooldown = await this.phx.INFLATION_COOLDOWN ? await this.phx.INFLATION_COOLDOWN() : 365 * 24 * 60 * 60;
+                const nextMintTime = Number(lastInflationTime) + Number(inflationCooldown);
+                const currentTime = Math.floor(Date.now() / 1000);
+                canMint = currentTime >= nextMintTime;
+            }
+        } catch (e) {
+            // If functions don't exist, assume we can mint for testing
+            canMint = true;
+        }
+
+        if (!canMint) {
+            try {
+                lastInflationTime = await this.phx.lastInflationTime ? await this.phx.lastInflationTime() : 0;
+                inflationCooldown = await this.phx.INFLATION_COOLDOWN ? await this.phx.INFLATION_COOLDOWN() : 365 * 24 * 60 * 60;
+                const nextMintTime = Number(lastInflationTime) + Number(inflationCooldown);
+                const currentTime = Math.floor(Date.now() / 1000);
+                
+                const timeRemaining = nextMintTime - currentTime;
+                const daysRemaining = Math.ceil(timeRemaining / (24 * 60 * 60));
+                
+                this.error(`Inflation minting not available yet.`);
+                console.log(this.theme.label("Last inflation time: ") + 
+                    (lastInflationTime > 0 ? 
+                        this.theme.value(new Date(Number(lastInflationTime) * 1000).toLocaleString()) : 
+                        this.theme.value("Never")));
+                console.log(this.theme.label("Next available in: ") + 
+                    this.theme.value(`${daysRemaining} days`));
+                console.log(this.theme.label("Cooldown period: ") + 
+                    this.theme.value(`${Number(inflationCooldown) / (24 * 60 * 60)} days`));
+                
+                // Offer to fast-forward time for testing
+                if (network.name === 'hardhat' || network.name === 'ganache') {
+                    const fastForward = (await this.question(this.theme.warn("Fast-forward time to next mint? (y/n): "))).trim().toLowerCase();
+                    if (fastForward === 'y' || fastForward === 'yes') {
+                        await network.provider.send("evm_increaseTime", [timeRemaining + 3600]); // Add 1 hour buffer
+                        await network.provider.send("evm_mine");
+                        this.success(`Fast-forwarded ${daysRemaining} days. You can now mint inflation.`);
+                    }
+                }
+                return;
+            } catch (infoError) {
+                this.error("Cannot retrieve detailed cooldown information from contract.");
+                return;
+            }
+        }
+
+        const totalSupply = await this.phx.totalSupply();
+        const inflationRate = await this.phx.INFLATION_RATE ? await this.phx.INFLATION_RATE() :
+                            await this.phx.inflationRate ? await this.phx.inflationRate() :
+                            await this.phx.getInflationRate ? await this.phx.getInflationRate() : 250;
+        
+        const inflationAmount = (totalSupply * BigInt(inflationRate)) / 10000n; // Assuming rate is in basis points
+        
+        console.log(this.theme.label("Current total supply: ") + 
+            this.theme.value(ethers.formatUnits(totalSupply, 18) + " PHX"));
+        console.log(this.theme.label("Annual inflation rate: ") + 
+            this.theme.value((Number(inflationRate) / 100) + "%"));
+        console.log(this.theme.label("Inflation to mint: ") + 
+            this.theme.value(ethers.formatUnits(inflationAmount, 18) + " PHX"));
+
+        const confirm = (await this.question(this.theme.warn("Confirm minting annual inflation? (y/n): "))).trim().toLowerCase();
+        if (confirm !== 'y' && confirm !== 'yes') {
+            this.smallNote("Inflation minting cancelled.");
+            return;
+        }
+
+        const spinner = ora("Minting annual inflation on blockchain...").start();
+        
+        // Get balances before
+        const beforeBal = await this.phx.balanceOf(this.owner.address);
+        const beforeSupply = await this.phx.totalSupply();
+        
+        // Try different possible function names for minting inflation
+        let tx;
+        try {
+            tx = await this.phx.mintAnnualInflation();
+        } catch (e) {
+            try {
+                // Try alternative function name
+                tx = await this.phx.mintInflation();
+            } catch (e2) {
+                // Fallback to emergency mint if inflation functions don't exist
+                this.error("Too soon to mint inflation through traditional mechanism. Fallback to EmergencyMint Initiated.");
+                tx = await this.phx.emergencyMint(inflationAmount);
+            }
+        }
+        
+        spinner.text = "Waiting for transaction confirmation...";
+        const receipt = await tx.wait();
+        
+        spinner.succeed("Annual inflation minted successfully!");
+        
+        // Get balances after
+        const afterBal = await this.phx.balanceOf(this.owner.address);
+        const afterSupply = await this.phx.totalSupply();
+        const actualInflation = afterBal - beforeBal;
+
+        // Update price oracle after inflation minting
+        await this.priceOracle.updatePriceAfterTransaction();
+        
+        // Record operation and get updated market data
+        this.priceOracle.recordCentralBankOperation('INFLATION', parseFloat(ethers.formatUnits(actualInflation, 18)), 
+            "Annual inflation mint");
+        const marketDataAfter = await this.priceOracle.getMarketData();
+
+        await this.addBlockchainTransaction(tx.hash, "Inflation Mint", this.owner.address, ethers.formatUnits(actualInflation, 18));
+
+        console.log(this.theme.label("New total supply: ") + 
+            this.theme.value(ethers.formatUnits(afterSupply, 18) + " PHX"));
+        console.log(this.theme.label("New treasury balance: ") + 
+            this.theme.value(ethers.formatUnits(afterBal, 18) + " PHX"));
+        console.log(this.theme.label("Actual inflation minted: ") + 
+            this.theme.value(ethers.formatUnits(actualInflation, 18) + " PHX"));
+        console.log(this.theme.label("New PHX Price: ") + 
+            this.theme.ok(`$${marketDataAfter.price} USD`));
+        
+    } catch (error) {
+        if (error.message.includes("Inflation: too soon") || error.message.includes("too soon")) {
+            this.error("Inflation minting failed: Too soon since last inflation mint.");
+            
+            // Try to get cooldown information
+            try {
+                const lastInflationTime = await this.phx.lastInflationTime ? await this.phx.lastInflationTime() : 0;
+                const inflationCooldown = await this.phx.INFLATION_COOLDOWN ? await this.phx.INFLATION_COOLDOWN() : 365 * 24 * 60 * 60;
+                const nextMintTime = Number(lastInflationTime) + Number(inflationCooldown);
+                const currentTime = Math.floor(Date.now() / 1000);
+                
+                const timeRemaining = nextMintTime - currentTime;
+                const daysRemaining = Math.ceil(timeRemaining / (24 * 60 * 60));
+                const hoursRemaining = Math.ceil(timeRemaining / (60 * 60));
+                
+                console.log(this.theme.label("Last inflation mint: ") + 
+                    (lastInflationTime > 0 ? 
+                        this.theme.value(new Date(Number(lastInflationTime) * 1000).toLocaleString()) : 
+                        this.theme.value("Never")));
+                console.log(this.theme.label("Time remaining: ") + 
+                    this.theme.value(`${daysRemaining} days (${hoursRemaining} hours)`));
+                console.log(this.theme.label("Cooldown period: ") + 
+                    this.theme.value(`${Number(inflationCooldown) / (24 * 60 * 60)} days`));
+                
+                // Offer to fast-forward time for testing
+                if (network.name === 'hardhat' || network.name === 'ganache') {
+                    const fastForward = (await this.question(this.theme.warn("Fast-forward time to next mint? (y/n): "))).trim().toLowerCase();
+                    if (fastForward === 'y' || fastForward === 'yes') {
+                        await network.provider.send("evm_increaseTime", [timeRemaining + 3600]); // Add 1 hour buffer
+                        await network.provider.send("evm_mine");
+                        this.success(`Fast-forwarded ${daysRemaining} days. You can now mint inflation.`);
+                    }
+                }
+                
+            } catch (infoError) {
+                console.log(this.theme.warn("Cannot retrieve detailed cooldown information from contract."));
+            }
+        } else {
+            this.error("Inflation minting failed: " + error.message);
+        }
+    }
+  }
+
+  // ---------- Emergency Mint ----------
+  async emergencyMint() {
+    this.section("EMERGENCY MINT (MAX 5% OF SUPPLY)");
+    try {
+      const amountStr = await this.getAmountFromUser(" Emergency mint amount (PHX): ");
+      const amountWei = ethers.parseUnits(amountStr, 18);
+      const amountNum = parseFloat(amountStr);
+      
+      // Get current market data before transaction
+      const marketDataBefore = await this.priceOracle.getMarketData();
+
+      // Check 5% cap
+      const totalSupply = await this.phx.totalSupply();
+      const maxAllowed = totalSupply / 20n; // 5%
+      
+      if (amountWei > maxAllowed) {
+        this.error(`Exceeds 5% emergency cap! Maximum allowed: ${ethers.formatUnits(maxAllowed, 18)} PHX`);
+        return;
+      }
+
+      console.log(this.theme.dim("\n Emergency Mint Summary:"));
+      console.log("  Amount:", this.theme.value(amountStr + " PHX"));
+      console.log("  Maximum Allowed:", this.theme.value(ethers.formatUnits(maxAllowed, 18) + " PHX"));
+      console.log("  Current Price:", this.theme.value(`$${marketDataBefore.price} USD`));
+
+      const confirm = (await this.question(this.theme.warn("Confirm emergency mint? (y/n): "))).trim().toLowerCase();
+      if (!["y", "yes"].includes(confirm)) { 
+        this.smallNote("Emergency mint cancelled."); 
+        return; 
+      }
+
+      const spinner = ora("Executing emergency mint on blockchain...").start();
+      
+      const tx = await this.phx.emergencyMint(amountWei);
+      await tx.wait();
+      
+      spinner.succeed("Emergency mint confirmed on blockchain!");
+
+      const newTreasuryBal = await this.phx.balanceOf(this.owner.address);
+      const newSupply = await this.phx.totalSupply();
+
+      // Record operation and update price
+      this.priceOracle.recordCentralBankOperation('EMERGENCY_MINT', amountNum, 
+        "Emergency mint");
+      const priceUpdate = await this.priceOracle.updatePriceAfterTransaction();
+      const marketDataAfter = await this.priceOracle.getMarketData();
+
+      await this.addBlockchainTransaction(tx.hash, "Emergency Mint", this.owner.address, amountStr);
+
+      console.log(this.theme.section("\n Mint Results:"));
+      console.log("  New Treasury Balance:", this.theme.ok(ethers.formatUnits(newTreasuryBal, 18) + " PHX"));
+      console.log("  New Total Supply:", this.theme.value(ethers.formatUnits(newSupply, 18) + " PHX"));
+      console.log("  New PHX Price:", this.theme.ok(`$${marketDataAfter.price} USD`));
+      
+      // Show price movement
+      if (priceUpdate.declined) {
+        console.log("  Price Change:", this.theme.err(`-${Math.abs(parseFloat(priceUpdate.priceChange))}%`));
+        console.log(this.theme.err("  Market price declined after emergency mint"));
+      } else {
+        console.log("  Price Change:", this.theme.ok(`+${priceUpdate.priceChange}%`));
+      }
+      
+      console.log(this.theme.dim(`  Transaction Hash: ${tx.hash}`));
+      
+    } catch (error) { 
+      this.error("Emergency mint failed: " + (error?.message || String(error))); 
+    }
+  }
+
+  // ---------- Enhanced System Status ----------
+  async checkSystemStatus() {
+    this.section("SYSTEM STATUS & MARKET ANALYTICS");
+    try {
+      const totalSupply = await this.phx.totalSupply();
+      const treasuryBal = await this.phx.balanceOf(this.owner.address);
+      const cbReserves = await this.phx.balanceOf(await this.cb.getAddress());
+      const marketData = await this.priceOracle.getMarketData();
+
+      console.log(this.theme.section(" Ownership & Governance:"));
+      console.log("  PHX Owner:", this.theme.value(await this.phx.owner()));
+      console.log("  Treasury:", this.theme.value(await this.phx.treasury()));
+      console.log("  Central Bank Governor:", this.theme.value(await this.cb.governor()));
+
+      console.log(this.theme.section("\n Treasury & Supply:"));
+      console.log("  Treasury Balance:", this.theme.ok(ethers.formatUnits(treasuryBal, 18) + " PHX"));
+      console.log("  Total Supply:", this.theme.value(ethers.formatUnits(totalSupply, 18) + " PHX"));
+      console.log("  Central Bank Reserves:", this.theme.value(ethers.formatUnits(cbReserves, 18) + " PHX"));
+
+      console.log(this.theme.section("\n Market Conditions:"));
+      console.log("  PHX Price:", this.theme.ok(`$${marketData.price} USD`));
+      console.log("  24h Change:", 
+        marketData.priceChange >= 0 ? this.theme.ok(`+${marketData.priceChange}%`) : this.theme.err(`${marketData.priceChange}%`));
+      console.log("  24h Volume:", this.theme.value(`${marketData.volume24h.toFixed(2)} PHX`));
+      
+      if (parseFloat(marketData.crashProbability) > 30) {
+        console.log("  Market Risk:", this.theme.err(`${marketData.crashProbability}% crash probability`));
+      }
+
+      // Show price decline warning if applicable
+      const currentPrice = marketData.price;
+      const lastTxPrice = this.priceOracle.lastTransactionPrice;
+      if (lastTxPrice && currentPrice < lastTxPrice) {
+        const decline = ((currentPrice - lastTxPrice) / lastTxPrice * 100).toFixed(2);
+        console.log("  Price Decline Since Last Tx:", this.theme.err(`${Math.abs(parseFloat(decline))}%`));
+      }
+
+      // Show recent operations
+      const operations = this.priceOracle.getOperationHistory();
+      if (operations.length > 0) {
+        console.log(this.theme.section("\n Recent Central Bank Operations:"));
+        const recentOps = operations.slice(0, 3);
+        recentOps.forEach(op => {
+          console.log(`  ${op.timestamp} - ${op.type}: ${op.amountPHX} PHX`);
+        });
+      }
+
+    } catch (error) { 
+      this.error(error?.message || String(error)); 
+    }
+  }
+
+  // ---------- Enhanced Menu ----------
+  async showMenu() {
+    const marketData = await this.priceOracle.getMarketData();
+    const priceChangeColor = marketData.priceChange >= 0 ? this.theme.ok : this.theme.err;
+    const riskWarning = parseFloat(marketData.crashProbability) > 40 ? this.theme.err(" HIGH RISK") : "";
+
+    this.section("PHX CENTRAL BANK CONSOLE - ENHANCED MARKET ANALYTICS");
+    console.log(this.theme.section(`Market: $${marketData.price} USD `) + 
+               priceChangeColor(`(${marketData.priceChange >= 0 ? '+' : ''}${marketData.priceChange}%)`) + riskWarning);
+    console.log("");
+    console.log("1.  System Status & Market Analytics");
+    console.log("2.  Treasury to Wallet Transfer");
+    console.log("3.  Quantitative Easing (QE)");
+    console.log("4.  Quantitative Tightening (QT)");
+    console.log("5.  Check Inflation Status");
+    console.log("6.  Mint Annual Inflation");
+    console.log("7.  Emergency Mint");
+    console.log("8.  View Blockchain Transaction History");
+    console.log("9.  View PHX/USD Price History");
+    console.log("10. Operation Impact Analysis");
+    console.log("11. Show Available Wallets");
+    console.log("12. Refresh Market Data");
+    console.log("13. Exit\n");
+    
+    const priceHistory = this.priceOracle.getPriceHistory();
+    const operations = this.priceOracle.getOperationHistory();
+    
+    console.log(this.theme.dim(` Analytics: ${priceHistory.length} price points | ${operations.length} operations | ${this.transactionLedger.length} blockchain txs`));
+    console.log(this.theme.dim(` Data: Shared price data with client wallet via ${CONFIG.SHARED_DATA_FILE}`));
+  }
+
+  async handleMenuChoice(choice) {
+    switch (choice) {
+      case "1": 
+        await this.checkSystemStatus(); 
+        break;
+      case "2": 
+        await this.treasuryToWallet(); 
+        break;
+      case "3": 
+        await this.quantitativeEasing(); 
+        break;
+      case "4": 
+        await this.quantitativeTightening(); 
+        break;
+      case "5": 
+        await this.checkInflationStatus();
+        break;
+      case "6": 
+        await this.mintAnnualInflation();
+        break;
+      case "7": 
+        await this.emergencyMint(); 
+        break;
+      case "8": 
+        await this.showInteractiveLedger();
+        break;
+      case "9":
+        await this.showPriceHistory();
+        break;
+      case "10":
+        await this.showOperationImpactAnalysis();
+        break;
+      case "11":
+        await this.showAvailableWallets();
+        break;
+      case "12":
+        await this.priceOracle.initialize();
+        this.success("Market data refreshed successfully!");
+        break;
+      case "13": 
+        console.log(this.theme.ok("\nThank you for using PHX Central Bank Console. Goodbye!"));
+        this.rl.close(); 
+        process.exit(0); 
+        break;
+      default: 
+        this.error("Invalid choice. Please select 1-13."); 
+        break;
+    }
+  }
+
+  async run() {
+    const ok = await this.initialize();
+    if (!ok) { 
+      this.rl.close(); 
+      process.exit(1); 
+    }
+
+    while (true) {
+      this.clearScreen();
+      await this.showMenu();
+      const choice = await this.question("Select operation (1-13): ");
+      await this.handleMenuChoice(choice.trim());
+      await this.question(this.theme.dim("\nPress Enter to continue..."));
+    }
+  }
+}
+
+// ---------- Main ----------
+async function main() {
+  try {
+    const bank = new PHXCentralBank();
+    await bank.run();
+  } catch (error) {
+    console.error(chalk.red("Fatal error:"), error.message);
+    process.exit(1);
+  }
+}
+
+if (require.main === module) {
+  main().catch(error => {
+    console.error(chalk.red("Unhandled error:"), error.message);
+    process.exit(1);
+  });
+}
+
+module.exports = PHXCentralBank;
